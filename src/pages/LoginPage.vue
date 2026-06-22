@@ -1,5 +1,6 @@
 <script setup>
-import {ref} from 'vue';
+import { ElMessage } from 'element-plus';
+import {ref, onMounted} from 'vue';
 const loginState=ref('account')
 import { useRouter } from 'vue-router'
 import axios from 'axios';
@@ -17,9 +18,50 @@ const form=ref({
   phone:'',
   password:'',
 })
+const autoLogin=ref(false);
+
+const phoneErrorMsg = ref('');
+const passwordErrorMsg = ref('');
+
+const validatePhoneOnBlur = () => {
+  if (!form.value.phone.trim()) {
+    phoneErrorMsg.value = '请输入手机号';
+    return false;
+  }
+  phoneErrorMsg.value = '';
+  return true;
+};
+
+const validatePasswordOnBlur = () => {
+  if (!form.value.password) {
+    passwordErrorMsg.value = '请输入密码';
+    return false;
+  }
+  passwordErrorMsg.value = '';
+  return true;
+};
+
+onMounted(() => {
+  const savedPhone = localStorage.getItem('autoLoginPhone');
+  const savedPassword = localStorage.getItem('autoLoginPassword');
+  if (savedPhone && savedPassword) {
+    form.value.phone = savedPhone;
+    form.value.password = savedPassword;
+    autoLogin.value = true;
+    handleLogin(true); // 传入 true 表示自动登录
+  }
+});
 
 const errorMessage=ref('');
-const handleLogin=async()=>{
+const handleLogin=async(isAuto = false)=>{
+  if (isAuto !== true) {
+    const isPhoneValid = validatePhoneOnBlur();
+    const isPasswordValid = validatePasswordOnBlur();
+    if (!isPhoneValid || !isPasswordValid) {
+      return;
+    }
+  }
+
   try{
     const response=await axios.post('http://localhost:8080/login',{
       phone:form.value.phone,
@@ -31,17 +73,36 @@ const handleLogin=async()=>{
       userStore.setLearned(data.learned)
       userStore.setTaught(data.taught)
       userStore.setTop(data.top)
-      alert('登录成功');
+      
+      if (autoLogin.value) {
+        localStorage.setItem('autoLoginPhone', form.value.phone);
+        localStorage.setItem('autoLoginPassword', form.value.password);
+      } else {
+        localStorage.removeItem('autoLoginPhone');
+        localStorage.removeItem('autoLoginPassword');
+      }
+
+      if (isAuto !== true) {
+        ElMessage.success('登录成功');
+      }
       router.push('/course');
     }else{
       errorMessage.value = data.message;
       console.log(errorMessage.value);
-      alert(errorMessage.value)
+      if (isAuto !== true) {
+        ElMessage.error(errorMessage.value);
+      } else {
+        localStorage.removeItem('autoLoginPhone');
+        localStorage.removeItem('autoLoginPassword');
+        autoLogin.value = false;
+      }
     }
   }catch(error){
     console.log("登录失败：",error)
     errorMessage.value = '服务器连接失败，请稍后重试';
-    alert(errorMessage.value)
+    if (isAuto !== true) {
+      ElMessage.error(errorMessage.value);
+    }
   }
 };
 </script>
@@ -56,7 +117,11 @@ const handleLogin=async()=>{
       <img src="@/assets/课堂派.png" alt="课堂派图片">
     </div>
     <div class="right">
-      <div class="title"><h1>账号登录</h1></div>
+      <div class="title">
+        <h1>
+          {{ loginState === 'account' ? '账号登录' : (loginState === 'phone' ? '手机短信登录' : '微信登录') }}
+        </h1>
+      </div>
 
       <div class="tool-bar">
         <div class="account-login">
@@ -73,15 +138,21 @@ const handleLogin=async()=>{
       <div class="account-div" v-if="loginState==='account'">
         <form @submit.prevent="handleLogin">
           <div class="input-box">
-            <div class="form-group"><input class="account"  v-model="form.phone" placeholder="请输入手机号" type="text"></div>
-            <div class="form-group"> <input class="password" v-model="form.password" placeholder="请输入密码" type="password" /></div>
+            <div class="form-group input-wrapper">
+              <input class="account" v-model="form.phone" placeholder="请输入手机号" type="text" @blur="validatePhoneOnBlur">
+              <div v-if="phoneErrorMsg" class="error-text">{{ phoneErrorMsg }}</div>
+            </div>
+            <div class="form-group input-wrapper"> 
+              <input class="password" v-model="form.password" placeholder="请输入密码" type="password" @blur="validatePasswordOnBlur" />
+              <div v-if="passwordErrorMsg" class="error-text">{{ passwordErrorMsg }}</div>
+            </div>
           </div>
         </form>
 
 
         <div class="login-forgot">
-          <div class="auto-login"><input type="checkbox">
-            <label>下次自动登录</label></div>
+          <div class="auto-login"><input type="checkbox" v-model="autoLogin" id="autoLoginCheck">
+            <label for="autoLoginCheck">下次自动登录</label></div>
           <div class="forgot-password" @click="goToForgotPassword"><span>忘记密码?</span></div>
         </div>
 
@@ -193,13 +264,31 @@ h1{
   display:flex;
   flex-direction:column;
 }
+
+.input-wrapper {
+  position: relative;
+  margin-top: 10px;
+}
+
+.input-wrapper input {
+  margin-top: 0;
+}
+
+.error-text {
+  color: #f56c6c;
+  font-size: 12px;
+  position: absolute;
+  bottom: -16px;
+  left: 2px;
+}
+
 .account,.password{
   border-radius:4px;
   border: 1px solid #dadce0;
   padding:4px 15px;
   height:48px;
-  margin-top:10px;
   width:100%;
+  box-sizing: border-box;
 }
 input:focus{
   outline:none;
@@ -260,16 +349,23 @@ input{
   border: 1px solid #dadce0;
 }
 
+.phone-div .input-box {
+  margin-top: 10px;
+}
+
 .phone{
   padding:4px 15px;
   height:48px;
   width:100%;
-  margin-top:10px;
+  margin-top: 0;
+  border-radius:4px;
+  border: 1px solid #dadce0;
+  box-sizing: border-box;
 }
 .verification{
   display:flex;
   gap:15px;
-  margin-top:10px;
+  margin-top: 10px;
 }
 .input-verification-code{
   padding:4px 15px;

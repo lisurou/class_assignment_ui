@@ -1,4 +1,6 @@
 <script setup>
+import { ElMessage, ElIcon } from 'element-plus';
+import { ArrowRight } from '@element-plus/icons-vue';
 //路由实例
 import {useRouter} from "vue-router";
 import {ref} from "vue";
@@ -28,6 +30,7 @@ const router = useRouter()
 const state = ref('账户设置');
 
 function goToLogin() {
+  userStore.logout(); // 调用退出登录的方法，清除信息
   router.push('/login')
 }
 
@@ -37,26 +40,26 @@ function goToCourse() {
 
 function handleEdit() {
   isEdit.value = true;
-  newName.value = userStore.account.name || '';
-  newStudentId.value = userStore.account.studentId || '';
-  newSchool.value = userStore.account.school || '';
-  newCollege.value = userStore.account.college || '';
-  newMajor.value = userStore.account.major || '';
-  newClasses.value = userStore.account.classes || '';
-  newGrade.value = userStore.account.grade || '1年级'; // 默认值
-  newEnrollment.value = userStore.account.enrollment || '';
+  newName.value = userStore.account?.name || '';
+  newStudentId.value = userStore.account?.studentId || '';
+  newSchool.value = userStore.account?.school || '';
+  newCollege.value = userStore.account?.college || '';
+  newMajor.value = userStore.account?.major || '';
+  newClasses.value = userStore.account?.classes || '';
+  newGrade.value = userStore.account?.grade || '1年级'; // 默认值
+  newEnrollment.value = userStore.account?.enrollment || '';
 }
 
-if (userStore.account.identity) {
-  selectedRole.value = userStore.account.identity;
-  originalRole.value = userStore.account.identity; // 同时更新原始角色
+if (userStore.account?.identity) {
+  selectedRole.value = userStore.account?.identity;
+  originalRole.value = userStore.account?.identity; // 同时更新原始角色
 }
 const successMessage = ref('');
 const handleConfirmChangeIdentity = async () => {
 
   try {
     const identityResponse = await axios.post('http://localhost:8080/change-identity', {
-      accountId: userStore.account.accountId,
+      accountId: userStore.account?.accountId,
       identity: selectedRole.value
     });
     const data = identityResponse.data
@@ -64,17 +67,17 @@ const handleConfirmChangeIdentity = async () => {
      userStore.setAccount(data.account);
       isGoToSet.value = false;
       successMessage.value = data.message;
-      alert(successMessage.value)
+      ElMessage.success(successMessage.value);
       userStore.setAccount(userStore.account);
     } else {
       errorMessage.value = data.message
       console.log(errorMessage.value)
-      alert(errorMessage.value)
+      ElMessage.error(errorMessage.value);
     }
   } catch (error) {
     console.error('角色变更请求失败:', error);
     errorMessage.value = '服务器连接失败，请稍后重试';
-    alert(errorMessage.value)
+    ElMessage.error(errorMessage.value);
   } finally {
     isLoading.value = false
   }
@@ -88,7 +91,7 @@ const handleSaveBasicInformation = async () => {
   isLoading.value = true
   try {
     const requestData = {
-      accountId: userStore.account.accountId,
+      accountId: userStore.account?.accountId,
       name: newName.value,
       studentId: newStudentId.value,
       school: newSchool.value,
@@ -100,7 +103,7 @@ const handleSaveBasicInformation = async () => {
     }
     const basicInformationResponse = await axios.post("http://localhost:8080/change-basic-information", requestData)
     const data = basicInformationResponse.data
-    if (data.success) {
+    if (data.success && userStore.account) {
       userStore.account.name = newName.value;
       userStore.account.studentId = newStudentId.value;
       userStore.account.school = newSchool.value;
@@ -119,16 +122,16 @@ const handleSaveBasicInformation = async () => {
       newClasses.value = '';
       newGrade.value = '';
       newEnrollment.value = '';
-      alert('基础信息编辑保存成功');
+      ElMessage.success('基础信息编辑保存成功');
     } else {
       errorMessage.value = data.message;
       console.log(errorMessage.value)
-      alert(errorMessage.value)
+      ElMessage.error(errorMessage.value);
     }
   } catch (error) {
     console.error('基础信息编辑保存失败', error);
     errorMessage.value = '服务器连接失败，请稍后重试';
-    alert(errorMessage.value)
+    ElMessage.error(errorMessage.value);
   } finally {
     isLoading.value = false;
   }
@@ -153,22 +156,22 @@ const handleSaveChangePassword = async () => {
   isLoading.value = true
   try {
     const changePasswordResponse = await axios.post("http://localhost:8080/change-password", {
-      accountId: userStore.account.accountId,
+      accountId: userStore.account?.accountId,
       password: newPassword.value
     });
     const data = changePasswordResponse.data
     if (data.success) {
-      alert('密码修改成功')
-      userStore.account.password = newPassword.value;
+      ElMessage.success('密码修改成功');
+      if (userStore.account) userStore.account.password = newPassword.value;
       isChangePassword = false;
     } else {
       errorMessage.value = data.message;
-      alert(errorMessage.value)
+      ElMessage.error(errorMessage.value);
     }
   } catch (error) {
     console.error('修改密码请求失败', error)
     errorMessage.value = '服务器连接失败，请稍后重试'
-    alert(errorMessage.value)
+    ElMessage.error(errorMessage.value);
   } finally {
     isLoading.value = false
   }
@@ -180,7 +183,7 @@ const validatePhone = (newPhone) => {
     errorMessage.value = '请输入有效的11位手机号';
     return false;
   }
-  if (newPhone.value === userStore.account.phone) {
+  if (newPhone.value === userStore.account?.phone) {
     errorMessage.value = '新旧手机号一致';
     return false;
   }
@@ -194,23 +197,23 @@ const handleConfirmChangePhone = async () => {
   isLoading.value = true;
   try {
     const response = await axios.post('http://localhost:8080/change-phone', {
-      accountId: userStore.account.accountId,
+      accountId: userStore.account?.accountId,
       phone: newPhone.value
     });
     const data = response.data
     if (data.success) {
-      userStore.account.phone = newPhone.value;
-      alert('手机号更新成功');
+      if (userStore.account) userStore.account.phone = newPhone.value;
+      ElMessage.success('手机号更新成功');
       newPhone.value = '';
       isChangePhone.value = false;
     } else {
       errorMessage.value = data.message;
-      alert(errorMessage.value)
+      ElMessage.error(errorMessage.value);
     }
   } catch (error) {
     console.error('手机号更新失败', error);
     errorMessage.value = '服务器连接失败，请稍后重试';
-    alert(errorMessage.value)
+    ElMessage.error(errorMessage.value);
   } finally {
     isLoading.value = false;
   }
@@ -225,7 +228,9 @@ function goToPersonalSetting() {
   <div class="header">
     <div class="head-left">
       <img src="@/assets/logo_blue.png">
-      <span>我的课堂</span>
+      <span class="breadcrumb" @click="goToCourse">我的课堂</span>
+      <span class="breadcrumb-separator"><el-icon><ArrowRight /></el-icon></span>
+      <span class="breadcrumb-current">用户设置</span>
     </div>
     <div class="head-right">
       <span>Ai工具集</span>
@@ -252,7 +257,7 @@ function goToPersonalSetting() {
         <img src="@/assets/课堂派头像.jpg">
       </div>
       <div>
-        <h6 class="name">{{ userStore.account.name }}</h6>
+        <h6 class="name">{{ userStore.account?.name }}</h6>
         <button class="activate-VIP">开通课堂派VIP</button>
       </div>
     </div>
@@ -268,8 +273,8 @@ function goToPersonalSetting() {
         <ul class="account-number-setting">
           <li class="account-li"><label>账号</label>
             <p>
-              <template v-if="userStore.account.accountId">
-                {{ userStore.account.accountId }}
+              <template v-if="userStore.account?.accountId">
+                {{ userStore.account?.accountId }}
               </template>
               <template v-else>
                 <i class="iconfont">&#xe642;</i>
@@ -294,8 +299,8 @@ function goToPersonalSetting() {
           <li v-else class="belonging-role-before"><label>所属角色</label>
             <div class="table-between">
               <p>
-                <template v-if="userStore.account.identity">
-                  {{ userStore.account.identity }}
+                <template v-if="userStore.account?.identity">
+                  {{ userStore.account?.identity }}
                 </template>
                 <template v-else>
                   <i class="iconfont">&#xe642;</i>
@@ -309,8 +314,8 @@ function goToPersonalSetting() {
           <li><label>手机号</label>
             <div class="table-between">
               <p>
-                <template v-if="userStore.account.phone">
-                  {{ userStore.account.phone }}
+                <template v-if="userStore.account?.phone">
+                  {{ userStore.account?.phone }}
                 </template>
                 <template v-else>
                   <i class="iconfont">&#xe642;</i>
@@ -328,7 +333,7 @@ function goToPersonalSetting() {
                 <div class="form-body">
                   <div class="form-item">
                     <label class="form-label">原手机号：</label>
-                    <span>{{ userStore.account.phone }}</span>
+                    <span>{{ userStore.account?.phone }}</span>
                   </div>
                   <div class="form-item">
                     <label class="form-label">新手机号</label>
@@ -345,8 +350,8 @@ function goToPersonalSetting() {
           <li class="password-li"><label>密码</label>
             <div class="table-between">
               <p>
-                <template v-if="userStore.account.password">
-                  {{ userStore.account.password }}
+                <template v-if="userStore.account?.password">
+                  {{ userStore.account?.password }}
                 </template>
                 <template v-else>
                   <i class="iconfont">&#xe642;</i>
@@ -389,10 +394,10 @@ function goToPersonalSetting() {
           <li class="name-li"><label>姓名</label>
             <input v-model="newName" placeholder="请输入内容" type="text">
           </li>
-          <li v-if="userStore.account.identity === '学生'"><label>学号</label>
+          <li v-if="userStore.account?.identity === '学生'"><label>学号</label>
             <input v-model="newStudentId" placeholder="请输入内容" type="text">
           </li>
-          <li v-if="userStore.account.identity === '老师'"><label>工号</label>
+          <li v-if="userStore.account?.identity === '老师'"><label>工号</label>
             <input v-model="newStudentId" placeholder="请输入内容" type="text">
           </li>
           <li><label>学校</label>
@@ -405,10 +410,10 @@ function goToPersonalSetting() {
 
             <input v-model="newMajor" placeholder="请输入内容" type="text">
           </li>
-          <li v-if="userStore.account.identity === '学生'"><label>班级</label>
+          <li v-if="userStore.account?.identity === '学生'"><label>班级</label>
             <input v-model="newClasses" placeholder="请输入内容" type="text">
           </li>
-          <li v-if="userStore.account.identity === '学生'"><label>年级</label>
+          <li v-if="userStore.account?.identity === '学生'"><label>年级</label>
             <select v-model="newGrade">
               <option>1年级</option>
               <option>2年级</option>
@@ -418,15 +423,15 @@ function goToPersonalSetting() {
               <option>6年级</option>
             </select>
           </li>
-          <li v-if="userStore.account.identity === '学生'" class="enrollment-time-li"><label>入学时间</label>
+          <li v-if="userStore.account?.identity === '学生'" class="enrollment-time-li"><label>入学时间</label>
             <input v-model="newEnrollment" placeholder="请输入内容" type="text">
           </li>
         </ul>
         <ul v-else class="basic-information">
           <li class="name-li"><label>姓名</label>
             <p>
-              <template v-if="userStore.account.name">
-                {{ userStore.account.name }}
+              <template v-if="userStore.account?.name">
+                {{ userStore.account?.name }}
               </template>
               <template v-else>
                 <i class="iconfont">&#xe642;</i>
@@ -434,10 +439,10 @@ function goToPersonalSetting() {
               </template>
             </p>
           </li>
-          <li v-if="userStore.account.identity === '学生'"><label>学号</label>
+          <li v-if="userStore.account?.identity === '学生'"><label>学号</label>
             <p>
-              <template v-if="userStore.account.studentId">
-                {{ userStore.account.studentId }}
+              <template v-if="userStore.account?.studentId">
+                {{ userStore.account?.studentId }}
               </template>
               <template v-else>
                 <i class="iconfont">&#xe642;</i>
@@ -445,10 +450,10 @@ function goToPersonalSetting() {
               </template>
             </p>
           </li>
-          <li v-if="userStore.account.identity === '老师'"><label>工号</label>
+          <li v-if="userStore.account?.identity === '老师'"><label>工号</label>
             <p>
-              <template v-if="userStore.account.studentId">
-                {{ userStore.account.studentId }}
+              <template v-if="userStore.account?.studentId">
+                {{ userStore.account?.studentId }}
               </template>
               <template v-else>
                 <i class="iconfont">&#xe642;</i>
@@ -458,8 +463,8 @@ function goToPersonalSetting() {
           </li>
           <li><label>学校</label>
             <p>
-              <template v-if="userStore.account.school">
-                {{ userStore.account.school }}
+              <template v-if="userStore.account?.school">
+                {{ userStore.account?.school }}
               </template>
               <template v-else>
                 <i class="iconfont">&#xe642;</i>
@@ -469,8 +474,8 @@ function goToPersonalSetting() {
           </li>
           <li><label>院系</label>
             <p>
-              <template v-if="userStore.account.college">
-                {{ userStore.account.college }}
+              <template v-if="userStore.account?.college">
+                {{ userStore.account?.college }}
               </template>
               <template v-else>
                 <i class="iconfont">&#xe642;</i>
@@ -480,8 +485,8 @@ function goToPersonalSetting() {
           </li>
           <li><label>专业</label>
             <p>
-              <template v-if="userStore.account.major">
-                {{ userStore.account.major }}
+              <template v-if="userStore.account?.major">
+                {{ userStore.account?.major }}
               </template>
               <template v-else>
                 <i class="iconfont">&#xe642;</i>
@@ -489,10 +494,10 @@ function goToPersonalSetting() {
               </template>
             </p>
           </li>
-          <li v-if="userStore.account.identity === '学生'"><label>班级</label>
+          <li v-if="userStore.account?.identity === '学生'"><label>班级</label>
             <p>
-              <template v-if="userStore.account.classes">
-                {{ userStore.account.classes }}
+              <template v-if="userStore.account?.classes">
+                {{ userStore.account?.classes }}
               </template>
               <template v-else>
                 <i class="iconfont">&#xe642;</i>
@@ -500,10 +505,10 @@ function goToPersonalSetting() {
               </template>
             </p>
           </li>
-          <li v-if="userStore.account.identity === '学生'"><label>年级</label>
+          <li v-if="userStore.account?.identity === '学生'"><label>年级</label>
             <p>
-              <template v-if="userStore.account.grade">
-                {{ userStore.account.grade }}
+              <template v-if="userStore.account?.grade">
+                {{ userStore.account?.grade }}
               </template>
               <template v-else>
                 <i class="iconfont">&#xe642;</i>
@@ -511,10 +516,10 @@ function goToPersonalSetting() {
               </template>
             </p>
           </li>
-          <li v-if="userStore.account.identity === '学生'" class="enrollment-time-li"><label>入学时间</label>
+          <li v-if="userStore.account?.identity === '学生'" class="enrollment-time-li"><label>入学时间</label>
             <p>
-              <template v-if="userStore.account.enrollment">
-                {{ userStore.account.enrollment }}
+              <template v-if="userStore.account?.enrollment">
+                {{ userStore.account?.enrollment }}
               </template>
               <template v-else>
                 <i class="iconfont">&#xe642;</i>
@@ -528,8 +533,8 @@ function goToPersonalSetting() {
           <li class="email-li"><label>邮箱绑定</label>
             <div class="table-between">
               <p>
-                <template v-if="userStore.account.email">
-                  {{ userStore.account.email }}
+                <template v-if="userStore.account?.email">
+                  {{ userStore.account?.email }}
                 </template>
                 <template v-else>
                   <i class="iconfont">&#xe642;</i>
@@ -588,6 +593,26 @@ function goToPersonalSetting() {
 </template>
 
 <style scoped>
+.breadcrumb {
+  cursor: pointer;
+  color: #333;
+  font-size: 16px;
+}
+.breadcrumb:hover {
+  color: #4285f4;
+}
+.breadcrumb-separator {
+  margin: 0 8px;
+  color: #c0c4cc;
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+}
+.breadcrumb-current {
+  color: #333;
+  font-size: 16px;
+}
+
 .dropdown {
   position: relative;
   display: inline-block;
@@ -658,9 +683,15 @@ function goToPersonalSetting() {
   padding: 19px 5px;
 }
 
+.head-left {
+  display: flex;
+  align-items: center;
+}
+
 .head-left img {
-  width: 112px;
-  margin-right: 30px;
+  width: auto;
+  height: 28px;
+  margin-right: 15px;
 }
 
 .header {

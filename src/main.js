@@ -1,4 +1,5 @@
 import './assets/main.css'
+import 'element-plus/dist/index.css'
 
 import { createApp } from 'vue'
 import App from './App.vue'
@@ -8,6 +9,7 @@ import LoginPage from "@/pages/LoginPage.vue";
 import ForgotPasswordPage from "@/pages/ForgotPasswordPage.vue";
 import PersonalSettingPage from "@/pages/PersonalSettingPage.vue";
 import CoursePage from "@/pages/CoursePage.vue"
+import HomePage from "@/pages/HomePage.vue"
 
 import {createPinia} from 'pinia'
 //1.配置路由规则
@@ -15,7 +17,7 @@ import {createPinia} from 'pinia'
 const routes = [
     {
         path: '/',
-        component: LoginPage,
+        component: HomePage,
     },
     {
         path: '/login',

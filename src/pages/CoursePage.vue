@@ -3,7 +3,8 @@
 import {useRouter} from "vue-router";
 import {ref} from 'vue';
 import {useUserStore} from '@/stores/userStore';
-import{ ElDialog,ElButton} from 'element-plus';
+import {  ElDialog,ElButton, ElMessage, ElIcon } from 'element-plus';
+import { ArrowRight } from '@element-plus/icons-vue';
 import {computed} from 'vue';
 import axios from 'axios';
 
@@ -11,7 +12,7 @@ const router = useRouter()
 const isSearchFocused = ref(false);
 let isFold=ref(true);
 const userStore = useUserStore();
-const identity=computed(()=>userStore.account.identity||"学生");
+const identity=computed(()=>userStore.account?.identity||"学生");
 const joinDialogVisible=ref(false);
 const createDialogVisible=ref(false);
 const taughtCourses = computed(() => userStore.taught || []);
@@ -24,8 +25,8 @@ const showAssignmentSubmit=ref(false);
 const showTeacherAssignment=ref(false);
 const currentAssignmentDetail = ref(null);
 const score=ref('');
-let iTeach=ref(false);
-let iLearn=ref(false);
+let iTeach=ref(userStore.account?.identity === '老师');
+let iLearn=ref(userStore.account?.identity !== '老师');
 const showLearnAssignment=ref(false);
 const currentCourseId = ref('');
 
@@ -46,10 +47,10 @@ const isCourseTop = (courseId) => {
 const handleJoinConfirm=async()=>{
   try{
     console.log('输入的课程码：',courseCode.value);
-    console.log(userStore.account.accountId)
+    console.log(userStore.account?.accountId)
     console.log(courseCode.value);
     const response=await axios.post('http://localhost:8080/join-course',{
-      accountId:userStore.account.accountId,
+      accountId:userStore.account?.accountId,
       id:courseCode.value
     });
     const data=response.data;
@@ -57,16 +58,16 @@ const handleJoinConfirm=async()=>{
       successMessage.value=data.message;
       userStore.setLearned(data.learned);
       joinDialogVisible.value=false;
-      alert(successMessage.value);
+      ElMessage.success(successMessage.value);
     }else{
       errorMessage.value=data.message;
       console.log(errorMessage.value);
-      alert(errorMessage.value);
+      ElMessage.error(errorMessage.value);
     }
   }catch(error){
     console.log("加入课程失败：",error);
     errorMessage.value="服务器错误，请稍后重试"
-    alert(errorMessage.value);
+    ElMessage.error(errorMessage.value);
   }
 };
 
@@ -77,11 +78,11 @@ try{
     name:courseName.value,
     classes:teachClass.value,
     number:studentNumber.value,
-    teacher:userStore.account.name
+    teacher:userStore.account?.name
   }
-  console.log("账号：",userStore.account.accountId)
+  console.log("账号：",userStore.account?.accountId)
 const response=await axios.post('http://localhost:8080/create-course', {
-  accountId:userStore.account.accountId,
+  accountId:userStore.account?.accountId,
   course:newCourse
 });
 const data=response.data;
@@ -95,40 +96,40 @@ if(data.success){
     userStore.setLearned(data.learned);
   }
   createDialogVisible.value=false;
- alert(successMessage.value);
+ ElMessage.success(successMessage.value);
 
 }else{
   errorMessage.value=data.message;
   console.log(errorMessage.value);
-  alert(errorMessage.value);
+  ElMessage.error(errorMessage.value);
 }
 }catch(error){
   console.log("创建课程失败：",error);
   errorMessage.value="服务器错误，请稍后重试";
-  alert(errorMessage.value);
+  ElMessage.error(errorMessage.value);
 }
 }
 const handleTop=async(course)=>{
 //将要置顶的课程传回后端，后端将其插入，并返回所有要置顶的课程
   try{
     const response=await axios.post('http://localhost:8080/top',{
-      accountId:userStore.account.accountId,
+      accountId:userStore.account?.accountId,
       id:course.id
     });
     const data=response.data;
     if(data.success){
       successMessage.value=data.message;
       userStore.setTop(data.top);
-      alert(successMessage.value);
+      ElMessage.success(successMessage.value);
     } else{
       errorMessage.value=data.message;
       console.log(errorMessage.value);
-      alert(errorMessage.value);
+      ElMessage.error(errorMessage.value);
     }
   }catch(error){
     console.log("置顶失败：", error);
     errorMessage.value = "服务器错误，请稍后重试";
-    alert(errorMessage.value);
+    ElMessage.error(errorMessage.value);
   }
 
 }
@@ -136,33 +137,39 @@ const handleTop=async(course)=>{
 const handleCancelTop = async (course) => {
   try {
     const response = await axios.post('http://localhost:8080/cancel-top', {
-      accountId: userStore.account.accountId,
+      accountId: userStore.account?.accountId,
       id: course.id // 传递要取消置顶的课程id
     });
     const data = response.data;
     if (data.success) {
       successMessage.value = data.message;
       userStore.setTop(data.top); // 更新置顶列表
-      alert(successMessage.value);
+      ElMessage.success(successMessage.value);
     } else {
       errorMessage.value = data.message;
-      alert(errorMessage.value);
+      ElMessage.error(errorMessage.value);
     }
   } catch (error) {
     console.log("取消置顶失败：", error);
     errorMessage.value = "服务器错误，请稍后重试";
-    alert(errorMessage.value);
+    ElMessage.error(errorMessage.value);
   }
 };
 
-function goToLogin() {
-  router.push('/login')
+const goToLogin = () => {
+  userStore.logout(); // 调用退出登录的方法，清除信息
+  router.push('/login');
 }
 function goToPersonalSetting() {
   router.push('/personal-setting')
 }
 function goToCourse(){
-  router.push('/course')
+  // 清除所有子页面状态，返回到主列表
+  showCourseDetails.value = false;
+  showTeacherAssignment.value = false;
+  showLearnAssignment.value = false;
+  displayReleaseAssignment.value = false;
+  currentCourseId.value = '';
 }
 function handleITeachClick(){
   iTeach.value=true;
@@ -334,7 +341,7 @@ const handleCheckAssignmentSubmit=async(assignmentDetail)=>{
  //点击查看，就到数据库中进行查询操作，课程码，作业码，已提交，共同确认，不用携带参数，用pinia，账号，返回我教的的作业
   try{
     const response=await axios.post('http://localhost:8080/check-assignment-submit',{
-      accountId:userStore.account.accountId,
+      accountId:userStore.account?.accountId,
       id:course.value.id,
       assignmentId:assignmentDetail.assignmentId
     });
@@ -345,18 +352,18 @@ const handleCheckAssignmentSubmit=async(assignmentDetail)=>{
       // 保存当前查看的作业详情
       currentAssignmentDetail.value = assignmentDetail;
       console.log("已提交的作业有："+data.assignments);
-      alert(successMessage.value);
+      ElMessage.success(successMessage.value);
       //所有assignment的title和content相同，
       showTeacherAssignment.value=true;
     }else {
       errorMessage.value = data.message;
-      alert(errorMessage.value);
+      ElMessage.error(errorMessage.value);
       console.log(errorMessage.value);
     }
   }catch(error){
     console.log("已提交作业页面加载失败：",error);
     errorMessage.value="服务器错误，请稍后重试";
-    alert(errorMessage.value);
+    ElMessage.error(errorMessage.value);
   }
 }
 
@@ -368,7 +375,7 @@ const handleDetail=async(id)=>{
     userStore.setAssignmentDetails([]);
    const response=await axios.post('http://localhost:8080/assignment-details',{
      id:id,
-     accountId:userStore.account.accountId,
+     accountId:userStore.account?.accountId,
    });
    const data=response.data;
    if(data.success){
@@ -377,16 +384,16 @@ const handleDetail=async(id)=>{
      console.log(data.assignments);
      userStore.setCourse(data.course);
      showCourseDetails.value=true;
-     alert(successMessage.value);
+     ElMessage.success(successMessage.value);
    }else {
       errorMessage.value = data.message;
-      alert(errorMessage.value);
+      ElMessage.error(errorMessage.value);
       console.log(errorMessage.value);
     }
   }catch(error){
     console.log("课程信息加载失败：",error);
     errorMessage.value="服务器错误，请稍后重试";
-    alert(errorMessage.value);
+    ElMessage.error(errorMessage.value);
   }
 }
 //批改作业
@@ -414,17 +421,17 @@ const handleConfirmCorrect=async(assignmentDetail)=>{
       // 保存当前查看的作业详情
       currentAssignmentDetail.value = assignmentDetail;
       console.log("已提交的作业有："+data.assignments);
-      alert(successMessage.value);
+      ElMessage.success(successMessage.value);
       showTeacherAssignment.value=true;
     }else {
       errorMessage.value = data.message;
-      alert(errorMessage.value);
+      ElMessage.error(errorMessage.value);
       console.log(errorMessage.value);
     }
   }catch(error){
     console.log("批改作业失败：",error);
     errorMessage.value="服务器错误，请稍后重试";
-    alert(errorMessage.value);
+    ElMessage.error(errorMessage.value);
   }
 }
 
@@ -434,14 +441,14 @@ const handleConfirmSubmit=async()=>{
   // 验证提交内容不为空
   if (!submitContent.value) {
     errorMessage.value = "提交内容不能为空";
-    alert(errorMessage.value);
+    ElMessage.error(errorMessage.value);
     return;
   }
   //点击确认提交，将课程码，账号，作业码,提交内容返回给后端储存起来
   try{
     const response=await axios.post("http://localhost:8080/assignment-submit",{
       id: LearnAssignmentDetail.value.id,
-      accountId: userStore.account.accountId,
+      accountId: userStore.account?.accountId,
       assignmentId: LearnAssignmentDetail.value.assignmentId,
       submitContent: submitContent.value
     });
@@ -449,18 +456,18 @@ const handleConfirmSubmit=async()=>{
     if (data.success) {
       successMessage.value = data.message;
       userStore.setAssignmentSubmit(data.assignment || {});  // 确保设置一个对象
-      alert(successMessage.value);
+      ElMessage.success(successMessage.value);
       showLearnAssignment.value = false;
       submitContent.value='';
     } else {
       errorMessage.value = data.message;
-      alert(errorMessage.value);
+      ElMessage.error(errorMessage.value);
       console.log(errorMessage.value);
     }
   } catch (error) {
     console.log("查询作业详情失败：", error);
     errorMessage.value = "服务器错误，请稍后重试";
-    alert(errorMessage.value);
+    ElMessage.error(errorMessage.value);
   }
 };
 //返回按钮
@@ -475,7 +482,7 @@ const fetchLatestAssignments = async () => {
   try {
     const response = await axios.post('http://localhost:8080/assignment-details', {
       id: currentCourseId.value,
-      accountId: userStore.account.accountId,
+      accountId: userStore.account?.accountId,
     });
     if (response.data.success) {
       // 用最新数据更新Pinia状态
@@ -501,7 +508,7 @@ const confirmReleaseAssignment = async () => {
     // 1. 增加参数校验
     if (!releaseTitle.value || !releaseDeadline.value || !releaseType.value || !releaseDetail.value || !releaseScore.value) {
       errorMessage.value = "请填写完整作业信息";
-      alert(errorMessage.value);
+      ElMessage.error(errorMessage.value);
       return;
     }
 
@@ -509,14 +516,14 @@ const confirmReleaseAssignment = async () => {
     const totalScore = parseInt(releaseScore.value, 10);
     if (isNaN(totalScore) || totalScore <= 0) {
       errorMessage.value = "总分必须是有效的正数";
-      alert(errorMessage.value);
+      ElMessage.error(errorMessage.value);
       return;
     }
 
     // 3. 验证当前课程ID是否存在
     if (!currentCourseId.value) {
       errorMessage.value = "未获取到课程信息，请重新进入课程";
-      alert(errorMessage.value);
+      ElMessage.error(errorMessage.value);
       return;
     }
 
@@ -529,7 +536,7 @@ const confirmReleaseAssignment = async () => {
     };
 
     const response = await axios.post("http://localhost:8080/release-assignment", {
-      accountId:userStore.account.accountId,
+      accountId:userStore.account?.accountId,
       id: currentCourseId.value,
       assignment: assignment
     });
@@ -537,7 +544,7 @@ const confirmReleaseAssignment = async () => {
     const data = response.data;
     if (data.success) {
       successMessage.value = data.message;
-      alert(successMessage.value);
+      ElMessage.success(successMessage.value);
       // 重置表单
       releaseTitle.value = '';
       releaseDeadline.value = '';
@@ -549,7 +556,7 @@ const confirmReleaseAssignment = async () => {
       //发布成功后立即刷新作业列表
       await fetchLatestAssignments();
       errorMessage.value = data.message;
-      alert(errorMessage.value);
+      ElMessage.error(errorMessage.value);
     }
   } catch (error) {
     console.log("发布作业失败：", error);
@@ -564,7 +571,7 @@ const confirmReleaseAssignment = async () => {
       // 请求配置错误
       errorMessage.value = "请求配置错误，请刷新页面重试";
     }
-    alert(errorMessage.value);
+    ElMessage.error(errorMessage.value);
   }
 };
 const displayReleaseAssignment=ref(false);
@@ -577,7 +584,15 @@ function fromReleaseBack(){
   <div class="header">
     <div class="head-left">
       <img src="@/assets/logo_blue.png">
-      <span>我的课堂</span>
+      <!-- 根据页面状态动态显示面包屑 -->
+      <template v-if="showCourseDetails || showTeacherAssignment || showLearnAssignment || displayReleaseAssignment">
+        <span class="breadcrumb" @click="goToCourse">我的课堂</span>
+        <span class="breadcrumb-separator"><el-icon><ArrowRight /></el-icon></span>
+        <span class="breadcrumb-current">课程内容</span>
+      </template>
+      <template v-else>
+        <span class="breadcrumb-current">我的课堂</span>
+      </template>
     </div>
     <div class="head-right">
       <span>Ai工具集</span>
@@ -635,7 +650,7 @@ function fromReleaseBack(){
     </div>
     <div class="nav">
       <div class="teach-learn">
-        <button class="teach-button" @click="handleITeachClick" v-if="userStore.account.identity==='老师'" :class="{'active':iTeach}"  >我教的</button>
+        <button class="teach-button" @click="handleITeachClick" v-if="userStore.account?.identity==='老师'" :class="{'active':iTeach}"  >我教的</button>
         <button class="learn-button" @click="handleILearnClick" :class="{'active':iLearn}">我学的</button>
       </div>
       <div class="search" :class="{ 'search-focused': isSearchFocused }">
@@ -643,7 +658,7 @@ function fromReleaseBack(){
         <button>搜</button>
       </div>
     </div>
-    <div class="teach-display-div" v-if="iTeach&&userStore.account.identity==='老师'" >
+    <div class="teach-display-div" v-if="iTeach&&userStore.account?.identity==='老师'" >
       <div class="bottom-course-container">
         <div class="bottom-course-container-header">
           <button @click="isFold=false" v-if="isFold">收起</button>
@@ -910,6 +925,25 @@ function fromReleaseBack(){
   </div>
 </template>
 <style>
+.breadcrumb {
+  cursor: pointer;
+  color: #333;
+  font-size: 16px;
+}
+.breadcrumb:hover {
+  color: #4285f4;
+}
+.breadcrumb-separator {
+  margin: 0 8px;
+  color: #c0c4cc;
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+}
+.breadcrumb-current {
+  color: #333;
+  font-size: 16px;
+}
 .release-assignment{
   display: flex;
   flex-direction: column;
@@ -1450,8 +1484,9 @@ body, html {
 }
 
 .head-left img {
-  width: 112px;
-  margin-right: 30px;
+  width: auto;
+  height: 28px;
+  margin-right: 15px;
 }
 
 .header {
@@ -1469,7 +1504,12 @@ body, html {
   justify-content: space-between;
 }
 
-.head-left, .head-right {
+.head-left {
+  display: flex;
+  align-items: center;
+}
+
+.head-right {
   display: flex;
   align-items: center;
 }

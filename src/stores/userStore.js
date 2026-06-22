@@ -40,25 +40,29 @@ export const useUserStore=defineStore('user',{
         setAssignmentSubmit(assignmentSubmit){
             this.assignmentSubmit=assignmentSubmit;
             localStorage.setItem('assignmentSubmit',JSON.stringify(assignmentSubmit));
+        },
+        // 退出登录时清除用户信息
+        logout(){
+            console.log('logout method is called');
+            this.account=null;
+            localStorage.removeItem('account');
+            this.learned=null;
+            localStorage.removeItem('learned');
+            this.taught=null;
+            localStorage.removeItem('taught');
+            this.top=null;
+            localStorage.removeItem('top');
+            this.assignmentDetails=null;
+            localStorage.removeItem('assignmentDetails');
+            this.course=null;
+            localStorage.removeItem('course');
+            this.assignmentSubmit=null;
+            localStorage.removeItem('assignmentSubmit');
+            
+            // 清除自动登录状态，否则退出后又会自动登录回来
+            localStorage.removeItem('autoLoginPhone');
+            localStorage.removeItem('autoLoginPassword');
         }
-    },
-    // 退出登录时清除用户信息
-    logout(){
-        console.log('logout method is called');
-        this.account=null;
-        localStorage.removeItem('account');
-        this.learned=null;
-        localStorage.removeItem('learned');
-        this.taught=null;
-        localStorage.removeItem('taught');
-        this.top=null;
-        localStorage.removeItem('top');
-        this.assignmentDetails=null;
-        localStorage.removeItem('assignmentDetails');
-        this.courseDetails=null;
-        localStorage.removeItem('course');
-        this.assignmentSubmit=null;
-        localStorage.removeItem('assignmentSubmit');
     }
 })
 
