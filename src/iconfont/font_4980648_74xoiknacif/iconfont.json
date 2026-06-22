@@ -1,0 +1,16 @@
+{
+  "id": "4980648",
+  "name": "calssAssignment",
+  "font_family": "iconfont",
+  "css_prefix_text": "icon-",
+  "description": "",
+  "glyphs": [
+    {
+      "icon_id": "11882885",
+      "name": "bg-warning",
+      "font_class": "bg-warning",
+      "unicode": "e642",
+      "unicode_decimal": 58946
+    }
+  ]
+}
