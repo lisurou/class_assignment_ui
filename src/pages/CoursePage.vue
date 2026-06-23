@@ -579,6 +579,7 @@ function fromReleaseBack(){
  displayReleaseAssignment.value=false;
 }
 
+const API_BASE = 'http://localhost:8080';
 const materialsTab = ref('attachment');
 const materialsFilePickerRef = ref(null);
 const createFolderDialogVisible = ref(false);
@@ -591,70 +592,215 @@ const movingFolderId = ref('');
 const moveTargetParentId = ref('root');
 const folderPath = ref(['root']);
 const currentFolderId = ref('root');
-const materialsByCourseId = ref({});
+const materialsCategory = ref('学习资料');
+const materialsLoading = ref(false);
+const materialsData = ref({
+  folders: [],
+  attachments: [],
+  links: []
+});
 
-function createId(prefix) {
-  return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+const materialCategories = {
+  study: '学习资料',
+  mooc: '慕课资料',
+  record: '录屏录像',
+  live: '直播录像'
+};
+
+function normalizeParentId(rawParentId) {
+  const normalized = rawParentId === null || rawParentId === undefined ? '' : String(rawParentId).trim();
+  return normalized === '' || normalized === '0' || normalized === '-1' || normalized.toLowerCase() === 'root'
+    || normalized.toLowerCase() === 'null' || normalized.toLowerCase() === 'undefined'
+    ? 'root'
+    : normalized;
 }
 
-function createDefaultMaterials() {
-  const now = Date.now();
+function parseListResponse(payload, ...candidateKeys) {
+  if (Array.isArray(payload)) return payload;
+
+  const sources = [
+    payload,
+    payload?.data,
+    payload?.result,
+    payload?.data?.data,
+    payload?.data?.result
+  ].filter(Boolean);
+
+  for (const source of sources) {
+    if (Array.isArray(source)) return source;
+  }
+
+  for (const source of sources) {
+    for (const key of candidateKeys) {
+      if (Array.isArray(source?.[key])) return source[key];
+    }
+    if (Array.isArray(source?.list)) return source.list;
+    if (Array.isArray(source?.records)) return source.records;
+    if (Array.isArray(source?.rows)) return source.rows;
+    if (Array.isArray(source?.items)) return source.items;
+    if (Array.isArray(source?.content)) return source.content;
+  }
+
+  for (const key of candidateKeys) {
+    if (Array.isArray(payload?.[key])) return payload[key];
+  }
+  if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.records)) return payload.records;
+  return [];
+}
+
+function normalizeFolder(item) {
   return {
-    attachments: [
-      {
-        id: 'file_seed_1',
-        type: 'file',
-        name: 'web开发技术.pptx',
-        parentId: 'root',
-        updatedAt: now,
-        downloadCount: 0
-      }
-    ],
-    links: [
-      {
-        id: 'link_seed_1',
-        title: 'ddd',
-        url: 'https://zhidao.baidu.com/question/127583583.html',
-        updatedAt: now
-      }
-    ]
+    id: String(item?.id ?? item?.folderId ?? item?.materialFolderId ?? ''),
+    name: item?.name ?? item?.folderName ?? '未命名文件夹',
+    parentId: normalizeParentId(item?.parentId ?? item?.parentFolderId ?? item?.folderParentId),
+    updatedAt: item?.updatedAt ?? item?.updateTime ?? item?.gmtModified ?? item?.createTime ?? Date.now(),
+    raw: item
   };
+}
+
+function normalizeAttachment(item) {
+  return {
+    id: String(item?.id ?? item?.attachmentId ?? item?.materialId ?? ''),
+    name: item?.name
+      ?? item?.fileName
+      ?? item?.attachmentName
+      ?? item?.originalName
+      ?? item?.original_name
+      ?? item?.storedName
+      ?? item?.stored_name
+      ?? '未命名资料',
+    parentId: normalizeParentId(item?.folderId ?? item?.parentId ?? item?.materialFolderId),
+    updatedAt: item?.updatedAt ?? item?.updateTime ?? item?.gmtModified ?? item?.createTime ?? Date.now(),
+    downloadCount: Number(item?.downloadCount ?? item?.downloads ?? item?.downloadNum ?? 0),
+    raw: item
+  };
+}
+
+function normalizeLink(item) {
+  return {
+    id: String(item?.id ?? item?.linkId ?? item?.materialLinkId ?? ''),
+    title: item?.title ?? item?.name ?? item?.linkTitle ?? '未命名外链',
+    url: item?.url ?? item?.linkUrl ?? item?.href ?? '',
+    parentId: normalizeParentId(item?.folderId ?? item?.parentId ?? item?.materialFolderId),
+    updatedAt: item?.updatedAt ?? item?.updateTime ?? item?.gmtModified ?? item?.createTime ?? Date.now(),
+    raw: item
+  };
+}
+
+function getMaterialsRequestParams() {
+  return {
+    accountId: userStore.account?.accountId,
+    category: materialsCategory.value
+  };
+}
+
+async function fetchMaterialFolders() {
+  const courseId = currentCourseKey.value;
+  if (!courseId) return [];
+  const response = await axios.get(`${API_BASE}/courses/${courseId}/materials/folders`, {
+    params: getMaterialsRequestParams()
+  });
+  const list = parseListResponse(response.data, 'folders', 'data', 'list');
+  return list.map(normalizeFolder).filter((item) => item.id);
+}
+
+async function fetchMaterialAttachments() {
+  const courseId = currentCourseKey.value;
+  if (!courseId) return [];
+  const response = await axios.get(`${API_BASE}/courses/${courseId}/materials/attachments`, {
+    params: getMaterialsRequestParams()
+  });
+  const list = parseListResponse(response.data, 'attachments', 'data', 'list');
+  return list.map(normalizeAttachment).filter((item) => item.id);
+}
+
+async function fetchMaterialLinks() {
+  const courseId = currentCourseKey.value;
+  if (!courseId) return [];
+  const response = await axios.get(`${API_BASE}/courses/${courseId}/materials/links`, {
+    params: getMaterialsRequestParams()
+  });
+  const list = parseListResponse(response.data, 'links', 'data', 'list');
+  return list.map(normalizeLink).filter((item) => item.id);
+}
+
+async function refreshMaterials() {
+  const courseId = currentCourseKey.value;
+  if (!courseId || !userStore.account?.accountId) return;
+  materialsLoading.value = true;
+  try {
+    const [folders, attachments, links] = await Promise.all([
+      fetchMaterialFolders(),
+      fetchMaterialAttachments(),
+      fetchMaterialLinks()
+    ]);
+    materialsData.value = { folders, attachments, links };
+  } catch (error) {
+    console.log('资料加载失败：', error);
+    ElMessage.error('资料加载失败，请稍后重试');
+  } finally {
+    materialsLoading.value = false;
+  }
 }
 
 const currentCourseKey = computed(() => course.value?.id || currentCourseId.value || '');
 watch(
-  currentCourseKey,
-  (key) => {
+  [currentCourseKey, materialsCategory],
+  ([key]) => {
     if (!key) return;
-    if (!materialsByCourseId.value[key]) {
-      materialsByCourseId.value[key] = createDefaultMaterials();
-    }
     materialsTab.value = 'attachment';
     folderPath.value = ['root'];
     currentFolderId.value = 'root';
+    refreshMaterials();
   },
   { immediate: true }
 );
 
-const currentMaterials = computed(() => {
-  const key = currentCourseKey.value;
-  return key ? materialsByCourseId.value[key] : null;
-});
+const currentMaterials = computed(() => materialsData.value);
 
 const currentFolderItems = computed(() => {
-  const items = currentMaterials.value?.attachments || [];
-  return items.filter((it) => it.parentId === currentFolderId.value);
+  const folders = (currentMaterials.value?.folders || []).map((it) => ({ ...it, type: 'folder' }));
+  const attachments = (currentMaterials.value?.attachments || []).map((it) => ({ ...it, type: 'file' }));
+  const links = (currentMaterials.value?.links || []).map((it) => ({ ...it, type: 'link', name: it.title }));
+  return [...folders, ...attachments, ...links].filter((it) => it.parentId === currentFolderId.value);
 });
 
-const allFolders = computed(() => {
-  const items = currentMaterials.value?.attachments || [];
-  return items.filter((it) => it.type === 'folder');
-});
+const currentFolderFolders = computed(() => currentFolderItems.value.filter((it) => it.type === 'folder'));
+const currentFolderFiles = computed(() => currentFolderItems.value.filter((it) => it.type === 'file'));
+const currentFolderLinks = computed(() => currentFolderItems.value.filter((it) => it.type === 'link'));
+const materialsActivityCount = computed(() => (currentMaterials.value?.folders || []).length + (currentMaterials.value?.attachments || []).length + (currentMaterials.value?.links || []).length);
+const materialsSubTabs = [
+  { key: 'study', label: '学习资料' },
+  { key: 'mooc', label: '慕课资料' },
+  { key: 'record', label: '录屏录像' },
+  { key: 'live', label: '直播录像' }
+];
+
+const allFolders = computed(() => currentMaterials.value?.folders || []);
+
+function changeMaterialsCategory(tabKey) {
+  materialsCategory.value = materialCategories[tabKey];
+}
 
 function getFileExt(name) {
   const parts = String(name || '').split('.');
   if (parts.length < 2) return '';
   return parts[parts.length - 1].toUpperCase();
+}
+
+function getFileTypeLabel(name) {
+  const ext = getFileExt(name);
+  if (!ext) return '资料';
+  if (['PPT', 'PPTX'].includes(ext)) return '资料';
+  if (['JPG', 'JPEG', 'PNG', 'GIF', 'WEBP'].includes(ext)) return '图片';
+  if (['PDF'].includes(ext)) return '文档';
+  return '资料';
+}
+
+function getMaterialsPanelTitle() {
+  const currentFolderName = getFolderName(currentFolderId.value);
+  return currentFolderId.value === 'root' ? `全部${materialsCategory.value}` : `${materialsCategory.value} / ${currentFolderName}`;
 }
 
 function formatEditTime(ts) {
@@ -682,7 +828,7 @@ function goToFolderPathIndex(index) {
 
 function getFolderName(folderId) {
   if (folderId === 'root') return '所有文件';
-  const folder = (currentMaterials.value?.attachments || []).find((it) => it.id === folderId);
+  const folder = (currentMaterials.value?.folders || []).find((it) => it.id === folderId);
   return folder?.name || '未命名文件夹';
 }
 
@@ -693,51 +839,63 @@ function triggerPickFiles() {
   el.click();
 }
 
-function addPickedFiles(e) {
+async function addPickedFiles(e) {
   const files = Array.from(e?.target?.files || []);
   if (!files.length) return;
-  const key = currentCourseKey.value;
-  if (!key) return;
-  const materials = materialsByCourseId.value[key];
-  const now = Date.now();
-  for (const f of files) {
-    materials.attachments.unshift({
-      id: createId('file'),
-      type: 'file',
-      name: f.name,
-      parentId: currentFolderId.value,
-      updatedAt: now,
-      downloadCount: 0
-    });
+  const courseId = currentCourseKey.value;
+  if (!courseId) return;
+  try {
+    for (const file of files) {
+      const formData = new FormData();
+      formData.append('accountId', userStore.account?.accountId || '');
+      formData.append('category', materialsCategory.value);
+      if (currentFolderId.value !== 'root') {
+        formData.append('folderId', currentFolderId.value);
+      }
+      formData.append('file', file);
+      await axios.post(`${API_BASE}/courses/${courseId}/materials/attachments`, formData);
+    }
+    await refreshMaterials();
+    ElMessage.success('已添加资源');
+  } catch (error) {
+    console.log('上传资料失败：', error);
+    ElMessage.error('上传资料失败，请稍后重试');
+  } finally {
+    if (e?.target) e.target.value = '';
   }
-  ElMessage.success('已添加资源');
 }
 
-function confirmCreateFolder() {
+async function confirmCreateFolder() {
   const name = newFolderName.value.trim();
   if (!name) {
     ElMessage.error('请输入文件夹名称');
     return;
   }
-  const key = currentCourseKey.value;
-  if (!key) return;
-  materialsByCourseId.value[key].attachments.unshift({
-    id: createId('folder'),
-    type: 'folder',
-    name,
-    parentId: currentFolderId.value,
-    updatedAt: Date.now()
-  });
-  newFolderName.value = '';
-  createFolderDialogVisible.value = false;
-  ElMessage.success('已新建文件夹');
+  const courseId = currentCourseKey.value;
+  if (!courseId) return;
+  try {
+    await axios.post(`${API_BASE}/courses/${courseId}/materials/folders`, {
+      accountId: userStore.account?.accountId,
+      category: materialsCategory.value,
+      name,
+      folderName: name,
+      parentId: currentFolderId.value === 'root' ? null : currentFolderId.value,
+      parentFolderId: currentFolderId.value === 'root' ? null : currentFolderId.value
+    });
+    newFolderName.value = '';
+    createFolderDialogVisible.value = false;
+    await refreshMaterials();
+    ElMessage.success('已新建文件夹');
+  } catch (error) {
+    console.log('新建文件夹失败：', error);
+    ElMessage.error('新建文件夹失败，请稍后重试');
+  }
 }
 
 function getDescendantFolderIds(folderId) {
-  const items = currentMaterials.value?.attachments || [];
+  const items = currentMaterials.value?.folders || [];
   const childrenByParent = new Map();
   for (const it of items) {
-    if (it.type !== 'folder') continue;
     const list = childrenByParent.get(it.parentId) || [];
     list.push(it.id);
     childrenByParent.set(it.parentId, list);
@@ -773,53 +931,96 @@ function openMoveFolderDialog(folderItem) {
   moveFolderDialogVisible.value = true;
 }
 
-function confirmMoveFolder() {
-  const key = currentCourseKey.value;
-  if (!key || !movingFolderId.value) return;
-  const materials = materialsByCourseId.value[key];
-  const folder = materials.attachments.find((it) => it.id === movingFolderId.value && it.type === 'folder');
-  if (!folder) return;
-  folder.parentId = moveTargetParentId.value;
-  folder.updatedAt = Date.now();
-  moveFolderDialogVisible.value = false;
-  ElMessage.success('已移动文件夹');
+async function confirmMoveFolder() {
+  const courseId = currentCourseKey.value;
+  if (!courseId || !movingFolderId.value) return;
+  try {
+    const targetId = moveTargetParentId.value === 'root' ? null : moveTargetParentId.value;
+    await axios.put(`${API_BASE}/courses/${courseId}/materials/folders/${movingFolderId.value}/move`, {
+      accountId: userStore.account?.accountId,
+      category: materialsCategory.value,
+      targetParentId: targetId,
+      targetFolderId: targetId,
+      parentId: targetId,
+      parentFolderId: targetId,
+      newParentId: targetId
+    });
+    moveFolderDialogVisible.value = false;
+    await refreshMaterials();
+    ElMessage.success('已移动文件夹');
+  } catch (error) {
+    console.log('移动文件夹失败：', error);
+    ElMessage.error('移动文件夹失败，请稍后重试');
+  }
 }
 
-function deleteAttachment(item) {
+async function deleteAttachment(item) {
   if (!item) return;
   if (!window.confirm(`确认删除“${item.name}”吗？`)) return;
-  const key = currentCourseKey.value;
-  if (!key) return;
-  const materials = materialsByCourseId.value[key];
-  if (item.type === 'folder') {
-    const descendants = getDescendantFolderIds(item.id);
-    const folderScope = new Set([item.id, ...descendants]);
-    materials.attachments = materials.attachments.filter((it) => !folderScope.has(it.id) && !folderScope.has(it.parentId));
-    if (currentFolderId.value === item.id || descendants.has(currentFolderId.value)) {
-      folderPath.value = ['root'];
-      currentFolderId.value = 'root';
+  const courseId = currentCourseKey.value;
+  if (!courseId) return;
+  try {
+    if (item.type === 'folder') {
+      await axios.delete(`${API_BASE}/courses/${courseId}/materials/folders/${item.id}`, {
+        params: { accountId: userStore.account?.accountId }
+      });
+      if (currentFolderId.value === item.id || getDescendantFolderIds(item.id).has(currentFolderId.value)) {
+        folderPath.value = ['root'];
+        currentFolderId.value = 'root';
+      }
+    } else {
+      await axios.delete(`${API_BASE}/courses/${courseId}/materials/attachments/${item.id}`, {
+        params: { accountId: userStore.account?.accountId }
+      });
     }
-  } else {
-    materials.attachments = materials.attachments.filter((it) => it.id !== item.id);
+    await refreshMaterials();
+    ElMessage.success('已删除');
+  } catch (error) {
+    console.log('删除资料失败：', error);
+    ElMessage.error('删除资料失败，请稍后重试');
   }
-  ElMessage.success('已删除');
 }
 
-function downloadAttachment(fileItem) {
+function extractFileNameFromHeaders(headers, fallbackName) {
+  const disposition = headers?.['content-disposition'] || headers?.['Content-Disposition'];
+  if (!disposition) return fallbackName;
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) return decodeURIComponent(utf8Match[1]);
+  const normalMatch = disposition.match(/filename="?([^"]+)"?/i);
+  return normalMatch?.[1] || fallbackName;
+}
+
+async function downloadAttachment(fileItem) {
   if (!fileItem || fileItem.type !== 'file') return;
-  const blob = new Blob([`课程资料：${fileItem.name}\n下载时间：${new Date().toLocaleString()}`], { type: 'text/plain;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = fileItem.name || 'material.txt';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-  fileItem.downloadCount = (fileItem.downloadCount || 0) + 1;
+  const courseId = currentCourseKey.value;
+  if (!courseId) return;
+  try {
+    const response = await axios.get(`${API_BASE}/courses/${courseId}/materials/attachments/${fileItem.id}/download`, {
+      params: { accountId: userStore.account?.accountId },
+      responseType: 'blob'
+    });
+    const blob = new Blob([response.data]);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = extractFileNameFromHeaders(response.headers, fileItem.name || 'material');
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    fileItem.downloadCount = (fileItem.downloadCount || 0) + 1;
+  } catch (error) {
+    console.log('下载资料失败：', error);
+    ElMessage.error('下载资料失败，请稍后重试');
+  }
 }
 
-function confirmAddLink() {
+function openLinkMaterial(linkItem) {
+  if (!linkItem?.url) return;
+  window.open(linkItem.url, '_blank', 'noopener,noreferrer');
+}
+
+async function confirmAddLink() {
   const title = newLinkTitle.value.trim();
   const url = newLinkUrl.value.trim();
   if (!title || !url) {
@@ -831,27 +1032,44 @@ function confirmAddLink() {
     ElMessage.error('链接需以 http:// 或 https:// 开头');
     return;
   }
-  const key = currentCourseKey.value;
-  if (!key) return;
-  materialsByCourseId.value[key].links.unshift({
-    id: createId('link'),
-    title,
-    url,
-    updatedAt: Date.now()
-  });
-  newLinkTitle.value = '';
-  newLinkUrl.value = '';
-  addLinkDialogVisible.value = false;
-  ElMessage.success('已添加外链');
+  const courseId = currentCourseKey.value;
+  if (!courseId) return;
+  try {
+    await axios.post(`${API_BASE}/courses/${courseId}/materials/links`, {
+      accountId: userStore.account?.accountId,
+      category: materialsCategory.value,
+      title,
+      name: title,
+      url,
+      linkUrl: url,
+      folderId: currentFolderId.value === 'root' ? null : currentFolderId.value
+    });
+    newLinkTitle.value = '';
+    newLinkUrl.value = '';
+    addLinkDialogVisible.value = false;
+    await refreshMaterials();
+    ElMessage.success('已添加外链');
+  } catch (error) {
+    console.log('添加外链失败：', error);
+    ElMessage.error('添加外链失败，请稍后重试');
+  }
 }
 
-function deleteLink(linkItem) {
+async function deleteLink(linkItem) {
   if (!linkItem) return;
   if (!window.confirm(`确认删除外链“${linkItem.title}”吗？`)) return;
-  const key = currentCourseKey.value;
-  if (!key) return;
-  materialsByCourseId.value[key].links = (materialsByCourseId.value[key].links || []).filter((l) => l.id !== linkItem.id);
-  ElMessage.success('已删除');
+  const courseId = currentCourseKey.value;
+  if (!courseId) return;
+  try {
+    await axios.delete(`${API_BASE}/courses/${courseId}/materials/links/${linkItem.id}`, {
+      params: { accountId: userStore.account?.accountId }
+    });
+    await refreshMaterials();
+    ElMessage.success('已删除');
+  } catch (error) {
+    console.log('删除外链失败：', error);
+    ElMessage.error('删除外链失败，请稍后重试');
+  }
 }
 </script>
 
@@ -1039,85 +1257,97 @@ function deleteLink(linkItem) {
           <span>这里是一片荒地</span>
         </div>
         <div class="course-learning-body" v-if="data">
-          <div class="materials-layout">
-            <div class="materials-side">
+          <div class="materials-panel">
+            <div class="materials-meta">共{{ materialsActivityCount }}个活动</div>
+
+            <div class="materials-resource-tabs">
               <button
-                class="materials-side-item"
-                :class="{ active: materialsTab === 'attachment' }"
-                @click="materialsTab = 'attachment'"
+                v-for="tab in materialsSubTabs"
+                :key="tab.key"
+                class="materials-resource-tab"
+                :class="{ active: materialsCategory === tab.label }"
+                @click="changeMaterialsCategory(tab.key)"
               >
-                附件资源
-              </button>
-              <button
-                class="materials-side-item"
-                :class="{ active: materialsTab === 'link' }"
-                @click="materialsTab = 'link'"
-              >
-                外链资源
+                {{ tab.label }}
               </button>
             </div>
-            <div class="materials-main">
-              <div class="materials-main-header">
-                <div class="materials-main-title">
-                  {{ materialsTab === 'attachment' ? '附件资源' : '外链资源' }}
-                </div>
+
+            <div class="materials-topbar">
+              <div></div>
+              <div class="materials-toolbar-actions">
+                <template v-if="iTeach">
+                  <button class="materials-action-outline" @click="createFolderDialogVisible = true">＋ 新建文件夹</button>
+                  <button class="materials-action-solid" @click="triggerPickFiles">＋ 添加资料</button>
+                  <button class="materials-kebab-btn" @click="addLinkDialogVisible = true">⋮</button>
+                  <input ref="materialsFilePickerRef" class="materials-file-input" type="file" multiple @change="addPickedFiles" />
+                </template>
               </div>
-              <div class="materials-divider"></div>
+            </div>
 
-              <div v-if="materialsTab === 'attachment'">
-                <div class="materials-section-title">
-                  <span
-                    v-for="(fid, idx) in folderPath"
-                    :key="fid"
-                    class="materials-breadcrumb-item"
-                    @click="goToFolderPathIndex(idx)"
-                  >
-                    {{ getFolderName(fid) }}<span v-if="idx < folderPath.length - 1"> / </span>
-                  </span>
-                </div>
+            <div class="materials-list-head">
+              <div class="materials-list-title">
+                <span
+                  v-for="(fid, idx) in folderPath"
+                  :key="fid"
+                  class="materials-breadcrumb-item"
+                  @click="goToFolderPathIndex(idx)"
+                >
+                  <template v-if="idx === 0">{{ getMaterialsPanelTitle() }}</template>
+                  <template v-else>{{ getFolderName(fid) }}</template>
+                  <span v-if="idx < folderPath.length - 1"> / </span>
+                </span>
+              </div>
+            </div>
 
-                <div class="materials-card">
-                  <div class="materials-actions" v-if="iTeach">
-                    <button class="materials-action-btn primary" @click="triggerPickFiles">＋ 添加资源</button>
-                    <button class="materials-action-btn" @click="createFolderDialogVisible = true">新建文件夹</button>
-                    <input ref="materialsFilePickerRef" class="materials-file-input" type="file" multiple @change="addPickedFiles" />
-                  </div>
-
-                  <div class="materials-grid" v-if="currentFolderItems.length">
+            <div class="materials-surface">
+              <div class="materials-card">
+                <div class="materials-empty" v-if="materialsLoading">资料加载中...</div>
+                <template v-else-if="iTeach">
+                  <div class="materials-teacher-list" v-if="currentFolderItems.length">
                     <div
-                      class="materials-item"
+                      class="materials-teacher-row"
                       v-for="it in currentFolderItems"
                       :key="it.id"
-                      @click="it.type === 'folder' ? openFolder(it) : null"
+                      @click="it.type === 'folder' ? openFolder(it) : (it.type === 'link' ? openLinkMaterial(it) : null)"
                     >
-                      <div class="materials-item-icon">
-                        <div class="materials-file-icon" v-if="it.type === 'file'">{{ getFileExt(it.name) || 'FILE' }}</div>
-                        <div class="materials-folder-icon" v-else>📁</div>
+                      <div class="materials-teacher-left">
+                        <div class="materials-folder-glyph" v-if="it.type === 'folder'"></div>
+                        <div class="materials-link-glyph" v-else-if="it.type === 'link'">链</div>
+                        <div class="materials-file-thumb" v-else>
+                          <div class="materials-file-badge">{{ getFileExt(it.name) || 'FILE' }}</div>
+                          <div class="materials-file-kind">{{ getFileTypeLabel(it.name) }}</div>
+                        </div>
+                        <div class="materials-teacher-info">
+                          <div class="materials-teacher-name">{{ it.name }}</div>
+                          <div class="materials-teacher-sub" v-if="it.type === 'link'">{{ it.url }}</div>
+                        </div>
                       </div>
-                      <div class="materials-item-name" :title="it.name">{{ it.name }}</div>
-                      <div class="materials-item-meta">
-                        <span v-if="it.type === 'file'">{{ it.downloadCount || 0 }}次下载</span>
-                        <span v-else>文件夹</span>
-                      </div>
-                      <div class="materials-item-ops">
+
+                      <div class="materials-teacher-actions">
                         <button
                           v-if="it.type === 'file'"
-                          class="materials-op-btn"
+                          class="materials-text-btn"
                           @click.stop="downloadAttachment(it)"
                         >
                           下载
                         </button>
                         <button
-                          v-if="iTeach && it.type === 'folder'"
-                          class="materials-op-btn"
+                          v-else-if="it.type === 'folder'"
+                          class="materials-text-btn"
                           @click.stop="openMoveFolderDialog(it)"
                         >
                           移动
                         </button>
                         <button
-                          v-if="iTeach"
-                          class="materials-op-btn danger"
-                          @click.stop="deleteAttachment(it)"
+                          v-else
+                          class="materials-text-btn"
+                          @click.stop="openLinkMaterial(it)"
+                        >
+                          打开
+                        </button>
+                        <button
+                          class="materials-text-btn danger"
+                          @click.stop="it.type === 'link' ? deleteLink(it) : deleteAttachment(it)"
                         >
                           删除
                         </button>
@@ -1126,28 +1356,36 @@ function deleteLink(linkItem) {
                   </div>
 
                   <div class="materials-empty" v-else>暂无资料</div>
-                </div>
-              </div>
+                </template>
 
-              <div v-else>
-                <div class="materials-section-title">外链资源</div>
-                <div class="materials-card">
-                  <div class="materials-actions" v-if="iTeach">
-                    <button class="materials-action-btn primary" @click="addLinkDialogVisible = true">＋ 添加外链</button>
-                  </div>
-
-                  <div v-if="(currentMaterials?.links || []).length" class="materials-link-list">
-                    <div class="materials-link-item" v-for="lk in currentMaterials.links" :key="lk.id">
-                      <div class="materials-link-title">{{ lk.title }}</div>
-                      <a class="materials-link-url" :href="lk.url" target="_blank" rel="noreferrer">{{ lk.url }}</a>
-                      <div class="materials-link-meta">{{ formatEditTime(lk.updatedAt) }}编辑</div>
-                      <div class="materials-link-ops" v-if="iTeach">
-                        <button class="materials-op-btn danger" @click="deleteLink(lk)">删除</button>
+                <template v-else>
+                  <div class="materials-student-list" v-if="currentFolderFolders.length || currentFolderFiles.length || currentFolderLinks.length">
+                    <div
+                      class="materials-student-row"
+                      v-for="it in [...currentFolderFolders, ...currentFolderFiles, ...currentFolderLinks]"
+                      :key="it.id"
+                    >
+                      <div class="materials-student-left">
+                        <div class="materials-folder-glyph small" v-if="it.type === 'folder'"></div>
+                        <div class="materials-link-glyph small" v-else-if="it.type === 'link'">链</div>
+                        <div class="materials-file-thumb small" v-else>
+                          <div class="materials-file-badge">{{ getFileExt(it.name) || 'FILE' }}</div>
+                          <div class="materials-file-kind">{{ getFileTypeLabel(it.name) }}</div>
+                        </div>
+                        <div class="materials-student-info">
+                          <div class="materials-student-name">{{ it.name }}</div>
+                        </div>
                       </div>
+                      <button
+                        class="materials-study-btn"
+                        @click="it.type === 'folder' ? openFolder(it) : (it.type === 'link' ? openLinkMaterial(it) : downloadAttachment(it))"
+                      >
+                        {{ it.type === 'folder' ? '进入文件夹' : (it.type === 'link' ? '访问链接' : '下载') }}
+                      </button>
                     </div>
                   </div>
-                  <div class="materials-empty" v-else>暂无外链资源</div>
-                </div>
+                  <div class="materials-empty" v-else>暂无资料</div>
+                </template>
               </div>
             </div>
           </div>
@@ -1567,52 +1805,107 @@ display: flex;
   justify-content:center;
 }
 
-.materials-layout{
-  display:flex;
-  margin-top:20px;
+.materials-panel{
+  margin-top:16px;
 }
-.materials-side{
-  width:140px;
-  display:flex;
-  flex-direction:column;
-  margin-right:24px;
-}
-.materials-side-item{
-  text-align:left;
-  padding:12px 10px;
+.materials-meta{
   font-size:14px;
-  color:#3c4043;
-  cursor:pointer;
-  border-left:2px solid transparent;
-}
-.materials-side-item.active{
-  color:#4285f4;
-  border-left-color:#4285f4;
-  background:#f5f9ff;
-}
-.materials-main{
-  flex:1;
-}
-.materials-main-title{
-  font-size:26px;
   color:#202124;
-  margin-bottom:10px;
-}
-.materials-divider{
-  height:1px;
-  background:#e6e8eb;
-  width:100%;
   margin-bottom:18px;
 }
-.materials-section-title{
+.materials-resource-tabs{
+  display:flex;
+  gap:36px;
+  border-bottom:1px solid #e6e8eb;
+  margin-bottom:16px;
+}
+.materials-resource-tab{
+  height:42px;
+  font-size:15px;
+  color:#202124;
+  cursor:pointer;
+  border-bottom:2px solid transparent;
+}
+.materials-resource-tab.active{
+  color:#4285f4;
+  border-bottom-color:#4285f4;
+}
+.materials-topbar{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  margin-bottom:18px;
+}
+.materials-surface{
+  width:100%;
+}
+.materials-list-head{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  margin-bottom:12px;
+}
+.materials-list-title{
   font-size:14px;
   color:#202124;
-  padding:12px 16px;
-  background:#f5f7fa;
-  border:1px solid #e6e8eb;
-  border-bottom:none;
-  border-top-left-radius:8px;
-  border-top-right-radius:8px;
+}
+.materials-toolbar-actions{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  flex-wrap:nowrap;
+}
+.materials-action-outline,
+.materials-action-solid,
+.materials-kebab-btn{
+  height:36px;
+  padding:0 18px;
+  border-radius:18px;
+  cursor:pointer;
+  font-size:14px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  white-space:nowrap;
+  flex-shrink:0;
+}
+.materials-action-outline{
+  color:#4285f4 !important;
+  border:1px solid #a8c7fa !important;
+  background-color:#fff !important;
+  min-width:136px;
+  box-shadow:inset 0 0 0 1px rgba(168, 199, 250, 0.35);
+}
+.materials-action-solid{
+  color:#fff !important;
+  border:1px solid #19c37d !important;
+  background-color:#19c37d !important;
+  min-width:132px;
+  box-shadow:0 2px 8px rgba(25, 195, 125, 0.18);
+}
+.materials-kebab-btn{
+  width:36px;
+  padding:0;
+  border:none;
+  background:transparent;
+  color:#5f6368;
+  font-size:20px;
+}
+.materials-list-tools{
+  display:flex;
+  align-items:center;
+  gap:12px;
+}
+.materials-list-tool{
+  height:38px;
+  min-width:72px;
+  padding:0 16px;
+  border:1px solid #dfe3e8;
+  border-radius:4px;
+  background:#fff;
+  color:#5f6368;
+  cursor:pointer;
+  font-size:14px;
 }
 .materials-breadcrumb-item{
   cursor:pointer;
@@ -1622,102 +1915,196 @@ display: flex;
 }
 .materials-card{
   border:1px solid #e6e8eb;
-  border-bottom-left-radius:8px;
-  border-bottom-right-radius:8px;
+  border-radius:8px;
   background:#fff;
-  padding:16px;
-}
-.materials-actions{
-  display:flex;
-  gap:12px;
-  margin-bottom:16px;
-}
-.materials-action-btn{
-  height:36px;
-  padding:0 14px;
-  border:1px solid #d0d7de;
-  border-radius:4px;
-  cursor:pointer;
-  background:#fff;
-  color:#202124;
-  font-size:14px;
-}
-.materials-action-btn.primary{
-  border-color:#4285f4;
-  color:#4285f4;
+  padding:0 24px;
 }
 .materials-file-input{
   display:none;
 }
-.materials-grid{
+.materials-teacher-list,
+.materials-student-list{
   display:flex;
-  flex-wrap:wrap;
+  flex-direction:column;
+}
+.materials-teacher-row,
+.materials-student-row{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  min-height:78px;
+  border-bottom:1px solid #eef0f2;
+}
+.materials-teacher-row:last-child,
+.materials-student-row:last-child{
+  border-bottom:none;
+}
+.materials-teacher-row{
+  padding:12px 0;
+  cursor:pointer;
+}
+.materials-student-row{
+  padding:0;
+}
+.materials-teacher-left,
+.materials-student-left{
+  display:flex;
+  align-items:center;
   gap:16px;
 }
-.materials-item{
-  width:160px;
-  border:1px solid #eef0f2;
-  border-radius:6px;
-  padding:12px;
-  cursor:pointer;
-  background:#fff;
+.materials-folder-glyph{
+  width:42px;
+  height:30px;
+  background:#f2c94c;
+  border-radius:4px;
+  position:relative;
 }
-.materials-item:hover{
-  border-color:#d7dde3;
-  box-shadow:0 2px 8px rgba(0,0,0,0.06);
+.materials-folder-glyph::before{
+  content:'';
+  position:absolute;
+  top:-4px;
+  left:4px;
+  width:18px;
+  height:8px;
+  border-top-left-radius:4px;
+  border-top-right-radius:4px;
+  background:#f2c94c;
 }
-.materials-item-icon{
-  height:92px;
+.materials-folder-glyph.small{
+  width:34px;
+  height:24px;
+}
+.materials-link-glyph{
+  width:42px;
+  height:42px;
+  border-radius:10px;
+  background:#eaf2ff;
+  color:#4285f4;
   display:flex;
   align-items:center;
   justify-content:center;
-  margin-bottom:10px;
-  background:#f7f9fb;
-  border-radius:6px;
+  font-size:16px;
+  font-weight:600;
 }
-.materials-file-icon{
+.materials-link-glyph.small{
+  width:34px;
+  height:34px;
+  font-size:14px;
+}
+.materials-file-thumb{
   width:54px;
-  height:54px;
-  border-radius:8px;
+  height:64px;
+  border:1px solid #eef0f2;
+  border-radius:4px;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  background:#fff;
+}
+.materials-file-thumb.small{
+  width:40px;
+  height:52px;
+}
+.materials-file-badge{
+  width:30px;
+  height:18px;
+  font-size:10px;
+  color:#e67e22;
+  background:#fff3e6;
+  border:1px solid #ffd8b5;
+  border-radius:3px;
   display:flex;
   align-items:center;
   justify-content:center;
   font-weight:700;
-  color:#d56b00;
-  background:#fff3e6;
-  border:1px solid #ffd8b5;
 }
-.materials-folder-icon{
-  font-size:34px;
-}
-.materials-item-name{
-  font-size:13px;
+.materials-file-kind{
+  margin-top:8px;
+  font-size:12px;
   color:#202124;
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
-  margin-bottom:6px;
 }
-.materials-item-meta{
+.materials-teacher-info,
+.materials-student-info{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+.materials-teacher-name,
+.materials-student-name{
+  font-size:15px;
+  color:#202124;
+}
+.materials-teacher-sub{
   font-size:12px;
   color:#80868b;
-  margin-bottom:10px;
+  max-width:360px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
 }
-.materials-item-ops{
+.materials-teacher-stats{
   display:flex;
-  gap:8px;
-  flex-wrap:wrap;
+  align-items:center;
+  gap:42px;
+  margin-left:auto;
+  margin-right:32px;
 }
-.materials-op-btn{
+.materials-stat{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+}
+.materials-stat-num{
+  color:#4d7cff;
+  font-size:18px;
+  line-height:1.2;
+}
+.materials-stat-label{
+  color:#5f6368;
+  font-size:12px;
+  margin-top:4px;
+}
+.materials-teacher-actions{
+  display:flex;
+  align-items:center;
+  gap:18px;
+  min-width:160px;
+  justify-content:flex-end;
+}
+.materials-text-btn{
   border:none;
   background:transparent;
   cursor:pointer;
   padding:0;
   color:#4285f4;
-  font-size:12px;
+  font-size:14px;
 }
-.materials-op-btn.danger{
+.materials-text-btn.danger{
   color:#d93025;
+}
+.materials-student-status{
+  font-size:12px;
+  color:#f2994a;
+}
+.materials-student-status.done{
+  color:#5f6368;
+}
+.materials-student-status.folder{
+  color:#5f6368;
+}
+.materials-study-btn{
+  min-width:90px;
+  height:30px;
+  border-radius:4px;
+  font-size:12px;
+  cursor:pointer;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  color:#fff !important;
+  background:#4d90fe !important;
+  border:1px solid #4d90fe !important;
 }
 .materials-empty{
   padding:26px 0;
@@ -1728,32 +2115,6 @@ display: flex;
 .materials-link-list{
   display:flex;
   flex-direction:column;
-}
-.materials-link-item{
-  padding:16px 0;
-  border-bottom:1px solid #eef0f2;
-}
-.materials-link-item:last-child{
-  border-bottom:none;
-}
-.materials-link-title{
-  font-size:16px;
-  color:#202124;
-  margin-bottom:6px;
-}
-.materials-link-url{
-  color:#4285f4;
-  font-size:13px;
-  text-decoration:none;
-  word-break:break-all;
-}
-.materials-link-meta{
-  color:#80868b;
-  font-size:12px;
-  margin-top:6px;
-}
-.materials-link-ops{
-  margin-top:8px;
 }
 .materials-select{
   width:100%;
