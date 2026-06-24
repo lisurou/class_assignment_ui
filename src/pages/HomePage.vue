@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useUserStore } from '@/stores/userStore';
 
@@ -36,20 +36,68 @@ const features = ref([
 const goToLogin = () => router.push('/login');
 const goToRegister = () => router.push('/register');
 const goToCourse = () => router.push('/course');
+const HOME_BASE_WIDTH = 1440;
+const TARGET_DPI_SCALE = 1.5;
+const SAFE_HORIZONTAL_GUTTER = 48;
+const homeScale = ref(1);
+const homeContentRef = ref(null);
+const homeShellHeight = ref(0);
+let homeResizeObserver = null;
+
+async function updateHomeScale() {
+  if (typeof window === 'undefined') return;
+  await nextTick();
+  const currentDpr = window.devicePixelRatio || 1;
+  const dpiScale = TARGET_DPI_SCALE / currentDpr;
+  const viewportWidth = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
+  const safeViewportWidth = Math.max(viewportWidth - SAFE_HORIZONTAL_GUTTER * 2, 320);
+  const widthScale = safeViewportWidth / HOME_BASE_WIDTH;
+  const nextScale = Math.min(dpiScale, widthScale);
+  homeScale.value = Number.isFinite(nextScale) && nextScale > 0 ? nextScale : 1;
+  const contentHeight = homeContentRef.value?.offsetHeight || 0;
+  homeShellHeight.value = contentHeight * homeScale.value;
+}
+
+const homeShellStyle = computed(() => ({
+  minHeight: `${Math.max(homeShellHeight.value, window.innerHeight || 0)}px`
+}));
+
+const homeFrameStyle = computed(() => ({
+  width: `${HOME_BASE_WIDTH * homeScale.value}px`,
+  height: `${homeShellHeight.value}px`
+}));
+
+const homeRootStyle = computed(() => ({
+  width: `${HOME_BASE_WIDTH}px`,
+  transform: `scale(${homeScale.value})`
+}));
 
 onMounted(() => {
-  document.documentElement.style.zoom = 1;
-
+  updateHomeScale();
+  window.addEventListener('resize', updateHomeScale);
+  if (typeof ResizeObserver !== 'undefined' && homeContentRef.value) {
+    homeResizeObserver = new ResizeObserver(() => {
+      updateHomeScale();
+    });
+    homeResizeObserver.observe(homeContentRef.value);
+  }
   const savedPhone = localStorage.getItem('autoLoginPhone');
   const savedPassword = localStorage.getItem('autoLoginPassword');
   if (userStore.account || (savedPhone && savedPassword)) {
     goToCourse();
   }
 });
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', updateHomeScale);
+  homeResizeObserver?.disconnect();
+});
 </script>
 
 <template>
-  <div id="app">
+  <div id="app" class="home-page-shell" :style="homeShellStyle">
+    <div class="home-page-frame" :style="homeFrameStyle">
+    <div ref="homeContentRef" class="home-page-root" :style="homeRootStyle">
     <!-- 导航栏 -->
     <header class="navbar">
       <div class="nav-inner">
@@ -138,6 +186,8 @@ onMounted(() => {
         </div>
       </div>
     </footer>
+    </div>
+    </div>
   </div>
 </template>
 
@@ -152,6 +202,26 @@ html, body, #app {
   min-height: 100vh;
   margin: 0;
   padding: 0;
+}
+.home-page-shell {
+  width: 100%;
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  overflow: visible;
+}
+.home-page-frame {
+  position: relative;
+  flex: 0 0 auto;
+}
+.home-page-root {
+  position: absolute;
+  top: 0;
+  left: 0;
+  flex: 0 0 auto;
+  transform-origin: top left;
+  will-change: transform;
 }
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
