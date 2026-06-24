@@ -7,6 +7,8 @@ import {  ElDialog,ElButton, ElMessage, ElIcon } from 'element-plus';
 import { ArrowRight } from '@element-plus/icons-vue';
 import {computed} from 'vue';
 import axios from 'axios';
+import CourseMaterials from '@/components/CourseMaterials.vue';
+import CourseAssignments from '@/components/CourseAssignments.vue';
 import TopicPage from '@/components/TopicPage.vue';
 
 const router = useRouter()
@@ -1082,7 +1084,7 @@ async function deleteLink(linkItem) {
     <div class="head-left">
       <img src="@/assets/logo_blue.png">
       <!-- 根据页面状态动态显示面包屑 -->
-      <template v-if="showCourseDetails || showTeacherAssignment || showLearnAssignment || displayReleaseAssignment">
+      <template v-if="showCourseDetails">
         <span class="breadcrumb" @click="goToCourse">我的课堂</span>
         <span class="breadcrumb-separator"><el-icon><ArrowRight /></el-icon></span>
         <span class="breadcrumb-current">课程内容</span>
@@ -1111,7 +1113,7 @@ async function deleteLink(linkItem) {
     </div>
   </div>
 
-  <div class="body-container"  v-if="!showCourseDetails&&!showTeacherAssignment&&!showLearnAssignment&&!displayReleaseAssignment">
+  <div class="body-container"  v-if="!showCourseDetails">
     <div class="top-course-container">
       <div class="top-course-container-header">
         <h2>置顶课程</h2>
@@ -1225,7 +1227,7 @@ async function deleteLink(linkItem) {
     </div>
 
   </div>
-  <div class="course-details" v-if="showCourseDetails&&!showTeacherAssignment&&!showLearnAssignment&&!displayReleaseAssignment">
+  <div class="course-details" v-if="showCourseDetails">
     <div class="course-details-header">
       <div class="course-details-header-title">
        <div>{{course.id}}</div>
@@ -1264,178 +1266,14 @@ async function deleteLink(linkItem) {
           <TopicPage :course-id="currentCourseKey" :course-name="courseName" />
         </div>
         <div class="course-learning-body" v-if="data">
-          <div class="materials-panel">
-            <div class="materials-meta">共{{ materialsActivityCount }}个活动</div>
-
-            <div class="materials-resource-tabs">
-              <button
-                v-for="tab in materialsSubTabs"
-                :key="tab.key"
-                class="materials-resource-tab"
-                :class="{ active: materialsCategory === tab.label }"
-                @click="changeMaterialsCategory(tab.key)"
-              >
-                {{ tab.label }}
-              </button>
-            </div>
-
-            <div class="materials-topbar">
-              <div></div>
-              <div class="materials-toolbar-actions">
-                <template v-if="iTeach">
-                  <button class="materials-action-outline" @click="createFolderDialogVisible = true">＋ 新建文件夹</button>
-                  <button class="materials-action-solid" @click="triggerPickFiles">＋ 添加资料</button>
-                  <button class="materials-kebab-btn" @click="addLinkDialogVisible = true">⋮</button>
-                  <input ref="materialsFilePickerRef" class="materials-file-input" type="file" multiple @change="addPickedFiles" />
-                </template>
-              </div>
-            </div>
-
-            <div class="materials-list-head">
-              <div class="materials-list-title">
-                <span
-                  v-for="(fid, idx) in folderPath"
-                  :key="fid"
-                  class="materials-breadcrumb-item"
-                  @click="goToFolderPathIndex(idx)"
-                >
-                  <template v-if="idx === 0">{{ getMaterialsPanelTitle() }}</template>
-                  <template v-else>{{ getFolderName(fid) }}</template>
-                  <span v-if="idx < folderPath.length - 1"> / </span>
-                </span>
-              </div>
-            </div>
-
-            <div class="materials-surface">
-              <div class="materials-card">
-                <div class="materials-empty" v-if="materialsLoading">资料加载中...</div>
-                <template v-else-if="iTeach">
-                  <div class="materials-teacher-list" v-if="currentFolderItems.length">
-                    <div
-                      class="materials-teacher-row"
-                      v-for="it in currentFolderItems"
-                      :key="it.id"
-                      @click="it.type === 'folder' ? openFolder(it) : (it.type === 'link' ? openLinkMaterial(it) : null)"
-                    >
-                      <div class="materials-teacher-left">
-                        <div class="materials-folder-glyph" v-if="it.type === 'folder'"></div>
-                        <div class="materials-link-glyph" v-else-if="it.type === 'link'">链</div>
-                        <div class="materials-file-thumb" v-else>
-                          <div class="materials-file-badge">{{ getFileExt(it.name) || 'FILE' }}</div>
-                          <div class="materials-file-kind">{{ getFileTypeLabel(it.name) }}</div>
-                        </div>
-                        <div class="materials-teacher-info">
-                          <div class="materials-teacher-name">{{ it.name }}</div>
-                          <div class="materials-teacher-sub" v-if="it.type === 'link'">{{ it.url }}</div>
-                        </div>
-                      </div>
-
-                      <div class="materials-teacher-actions">
-                        <button
-                          v-if="it.type === 'file'"
-                          class="materials-text-btn"
-                          @click.stop="downloadAttachment(it)"
-                        >
-                          下载
-                        </button>
-                        <button
-                          v-else-if="it.type === 'folder'"
-                          class="materials-text-btn"
-                          @click.stop="openMoveFolderDialog(it)"
-                        >
-                          移动
-                        </button>
-                        <button
-                          v-else
-                          class="materials-text-btn"
-                          @click.stop="openLinkMaterial(it)"
-                        >
-                          打开
-                        </button>
-                        <button
-                          class="materials-text-btn danger"
-                          @click.stop="it.type === 'link' ? deleteLink(it) : deleteAttachment(it)"
-                        >
-                          删除
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="materials-empty" v-else>暂无资料</div>
-                </template>
-
-                <template v-else>
-                  <div class="materials-student-list" v-if="currentFolderFolders.length || currentFolderFiles.length || currentFolderLinks.length">
-                    <div
-                      class="materials-student-row"
-                      v-for="it in [...currentFolderFolders, ...currentFolderFiles, ...currentFolderLinks]"
-                      :key="it.id"
-                    >
-                      <div class="materials-student-left">
-                        <div class="materials-folder-glyph small" v-if="it.type === 'folder'"></div>
-                        <div class="materials-link-glyph small" v-else-if="it.type === 'link'">链</div>
-                        <div class="materials-file-thumb small" v-else>
-                          <div class="materials-file-badge">{{ getFileExt(it.name) || 'FILE' }}</div>
-                          <div class="materials-file-kind">{{ getFileTypeLabel(it.name) }}</div>
-                        </div>
-                        <div class="materials-student-info">
-                          <div class="materials-student-name">{{ it.name }}</div>
-                        </div>
-                      </div>
-                      <button
-                        class="materials-study-btn"
-                        @click="it.type === 'folder' ? openFolder(it) : (it.type === 'link' ? openLinkMaterial(it) : downloadAttachment(it))"
-                      >
-                        {{ it.type === 'folder' ? '进入文件夹' : (it.type === 'link' ? '访问链接' : '下载') }}
-                      </button>
-                    </div>
-                  </div>
-                  <div class="materials-empty" v-else>暂无资料</div>
-                </template>
-              </div>
-            </div>
-          </div>
+          <CourseMaterials :course-id="course.id || currentCourseId" :is-teacher-view="iTeach" />
         </div>
         <div class="course-learning-body" v-if="homework">
-          <div class="activity-number">共{{assignmentDetails.length}}个活动</div>
-         <button class="releaseAssignment" v-if="iTeach" @click="displayReleaseAssignment=true">发布作业</button>
-          <div class="homework-box">
-            <div class="homework-container" v-if="iLearn" v-for="assignmentDetail in assignmentDetails.filter(c=>c)" :key="assignmentDetail.assignmentId">
-              <div class="homework-logo">
-               <img src="@/assets/课堂派作业图片.png" alt="课堂派作业图片">
-                <span>作业</span>
-              </div>
-              <div class="assignment-info">
-                <div class="assignment-title">{{assignmentDetail.title}}</div>
-                <div class="assignment-content">
-                  <div>提交截止时间：{{assignmentDetail.deadline}}</div>
-                  <div>{{assignmentDetail.assignmentType}}</div>
-                  <div v-if="assignmentDetail.submit==='已提交'">已提交</div>
-                  <div v-else>未提交</div>
-                  <div v-if="assignmentDetail.correct==='已批改'">已批改</div>
-                  <div v-else>未批改</div>
-                  <div v-if="assignmentDetail.correct==='已批改'">{{assignmentDetail.score}}分</div>
-                </div>
-              </div>
-              <button class="submit-button" @click="handleAssignmentSubmit(assignmentDetail)">提交作业</button>
-            </div>
-            <div class="homework-container" v-if="iTeach"
-                 v-for="assignmentDetail in assignmentDetails.filter(c=>c)"
-                 :key="`${assignmentDetail.id}-${assignmentDetail.assignmentId}-${assignmentDetail.accountId}`">
-              <div class="homework-logo">
-                <img src="@/assets/课堂派作业图片.png" alt="课堂派作业图片">
-                <span>作业</span>
-              </div>
-              <div class="assignment-info">
-                <div class="assignment-title">{{assignmentDetail.title}}</div>
-                <div class="assignment-content">
-                  <div>提交截止时间：{{assignmentDetail.deadline}}</div>
-                </div>
-              </div>
-              <button class="submit-button" @click="handleCheckAssignmentSubmit(assignmentDetail)">查看已提交作业</button>
-            </div>
-          </div>
+          <CourseAssignments
+            :course-id="course.id || currentCourseId"
+            :is-teacher-view="iTeach"
+            :is-student-view="iLearn"
+          />
         </div>
       </div>
     </div>
@@ -1519,78 +1357,6 @@ async function deleteLink(linkItem) {
           <el-button class="confirm-button" type="primary" @click="handleJoinConfirm">确认</el-button>
           </div>
         </span>
-    </template>
-  </el-dialog>
-  <el-dialog v-model="createFolderDialogVisible" draggable :close-on-click-modal="false" :show-close="false">
-    <template #header>
-      <div class="dialog-header">
-        <span class="join-course-span">新建文件夹</span>
-        <span class="cancel-span" @click="createFolderDialogVisible = false">×</span>
-      </div>
-    </template>
-    <div class="dialog-body">
-      <div class="input-div">
-        <div><span>*</span><label>文件夹名称</label></div>
-        <input v-model="newFolderName" placeholder="请输入文件夹名称" />
-      </div>
-    </div>
-    <template #footer>
-      <span class="dialog-footer">
-        <div class="cancel-confirm">
-          <el-button class="cancel-button" @click="createFolderDialogVisible = false">取消</el-button>
-          <el-button class="confirm-button" type="primary" @click="confirmCreateFolder">确认</el-button>
-        </div>
-      </span>
-    </template>
-  </el-dialog>
-  <el-dialog v-model="moveFolderDialogVisible" draggable :close-on-click-modal="false" :show-close="false">
-    <template #header>
-      <div class="dialog-header">
-        <span class="join-course-span">移动文件夹</span>
-        <span class="cancel-span" @click="moveFolderDialogVisible = false">×</span>
-      </div>
-    </template>
-    <div class="dialog-body">
-      <div class="input-div">
-        <div><span>*</span><label>目标位置</label></div>
-        <select v-model="moveTargetParentId" class="materials-select">
-          <option v-for="opt in moveTargets" :key="opt.id" :value="opt.id">{{ opt.name }}</option>
-        </select>
-      </div>
-    </div>
-    <template #footer>
-      <span class="dialog-footer">
-        <div class="cancel-confirm">
-          <el-button class="cancel-button" @click="moveFolderDialogVisible = false">取消</el-button>
-          <el-button class="confirm-button" type="primary" @click="confirmMoveFolder">确认</el-button>
-        </div>
-      </span>
-    </template>
-  </el-dialog>
-  <el-dialog v-model="addLinkDialogVisible" draggable :close-on-click-modal="false" :show-close="false">
-    <template #header>
-      <div class="dialog-header">
-        <span class="join-course-span">添加外链</span>
-        <span class="cancel-span" @click="addLinkDialogVisible = false">×</span>
-      </div>
-    </template>
-    <div class="dialog-body">
-      <div class="input-div">
-        <div><span>*</span><label>外链名称</label></div>
-        <input v-model="newLinkTitle" placeholder="请输入外链名称" />
-      </div>
-      <div class="input-div">
-        <div><span>*</span><label>链接地址</label></div>
-        <input v-model="newLinkUrl" placeholder="https://..." />
-      </div>
-    </div>
-    <template #footer>
-      <span class="dialog-footer">
-        <div class="cancel-confirm">
-          <el-button class="cancel-button" @click="addLinkDialogVisible = false">取消</el-button>
-          <el-button class="confirm-button" type="primary" @click="confirmAddLink">确认</el-button>
-        </div>
-      </span>
     </template>
   </el-dialog>
   <el-dialog v-model="createDialogVisible" draggable :close-on-click-modal="false" :show-close="false">
@@ -1704,40 +1470,6 @@ async function deleteLink(linkItem) {
   flex-direction: column;
   color:white;
 }
-.homework-logo{
-  width:85px;
-  margin:0 16px 0 0;
-  display:flex;
-  flex-direction:column;
-  justify-content:center;
-  align-items:center;
-}
-.homework-logo img{
-  margin:0 0 10px;
-  width:40px;
-  display:flex;
-}
-.homework-logo span{
-  display:flex;
-  font-size:14px;
-}
-.activity-number{
-  font-size:13px;
-}
-.homework-box{
-  border-radius:8px;
-  border:1px solid #e4e4e4;
-  display:flex;
-  flex-direction:column;
-  padding:16px 0 0;
-  margin:8px 0 10px;
-  width:100%;
-}
-.homework-container{
-  width: 100%;
-  height:95px;
-  padding:10px 16px 0;
-}
 .course-learning-header{
 display: flex;
   height:45px;
@@ -1829,326 +1561,6 @@ display: flex;
   display:flex;
   flex-direction:column;
   justify-content:center;
-}
-
-.materials-panel{
-  margin-top:16px;
-}
-.materials-meta{
-  font-size:14px;
-  color:#202124;
-  margin-bottom:18px;
-}
-.materials-resource-tabs{
-  display:flex;
-  gap:36px;
-  border-bottom:1px solid #e6e8eb;
-  margin-bottom:16px;
-}
-.materials-resource-tab{
-  height:42px;
-  font-size:15px;
-  color:#202124;
-  cursor:pointer;
-  border-bottom:2px solid transparent;
-}
-.materials-resource-tab.active{
-  color:#4285f4;
-  border-bottom-color:#4285f4;
-}
-.materials-topbar{
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  margin-bottom:18px;
-}
-.materials-surface{
-  width:100%;
-}
-.materials-list-head{
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  margin-bottom:12px;
-}
-.materials-list-title{
-  font-size:14px;
-  color:#202124;
-}
-.materials-toolbar-actions{
-  display:flex;
-  align-items:center;
-  gap:12px;
-  flex-wrap:nowrap;
-}
-.materials-action-outline,
-.materials-action-solid,
-.materials-kebab-btn{
-  height:36px;
-  padding:0 18px;
-  border-radius:18px;
-  cursor:pointer;
-  font-size:14px;
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  white-space:nowrap;
-  flex-shrink:0;
-}
-.materials-action-outline{
-  color:#4285f4 !important;
-  border:1px solid #a8c7fa !important;
-  background-color:#fff !important;
-  min-width:136px;
-  box-shadow:inset 0 0 0 1px rgba(168, 199, 250, 0.35);
-}
-.materials-action-solid{
-  color:#fff !important;
-  border:1px solid #19c37d !important;
-  background-color:#19c37d !important;
-  min-width:132px;
-  box-shadow:0 2px 8px rgba(25, 195, 125, 0.18);
-}
-.materials-kebab-btn{
-  width:36px;
-  padding:0;
-  border:none;
-  background:transparent;
-  color:#5f6368;
-  font-size:20px;
-}
-.materials-list-tools{
-  display:flex;
-  align-items:center;
-  gap:12px;
-}
-.materials-list-tool{
-  height:38px;
-  min-width:72px;
-  padding:0 16px;
-  border:1px solid #dfe3e8;
-  border-radius:4px;
-  background:#fff;
-  color:#5f6368;
-  cursor:pointer;
-  font-size:14px;
-}
-.materials-breadcrumb-item{
-  cursor:pointer;
-}
-.materials-breadcrumb-item:hover{
-  color:#4285f4;
-}
-.materials-card{
-  border:1px solid #e6e8eb;
-  border-radius:8px;
-  background:#fff;
-  padding:0 24px;
-}
-.materials-file-input{
-  display:none;
-}
-.materials-teacher-list,
-.materials-student-list{
-  display:flex;
-  flex-direction:column;
-}
-.materials-teacher-row,
-.materials-student-row{
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  min-height:78px;
-  border-bottom:1px solid #eef0f2;
-}
-.materials-teacher-row:last-child,
-.materials-student-row:last-child{
-  border-bottom:none;
-}
-.materials-teacher-row{
-  padding:12px 0;
-  cursor:pointer;
-}
-.materials-student-row{
-  padding:0;
-}
-.materials-teacher-left,
-.materials-student-left{
-  display:flex;
-  align-items:center;
-  gap:16px;
-}
-.materials-folder-glyph{
-  width:42px;
-  height:30px;
-  background:#f2c94c;
-  border-radius:4px;
-  position:relative;
-}
-.materials-folder-glyph::before{
-  content:'';
-  position:absolute;
-  top:-4px;
-  left:4px;
-  width:18px;
-  height:8px;
-  border-top-left-radius:4px;
-  border-top-right-radius:4px;
-  background:#f2c94c;
-}
-.materials-folder-glyph.small{
-  width:34px;
-  height:24px;
-}
-.materials-link-glyph{
-  width:42px;
-  height:42px;
-  border-radius:10px;
-  background:#eaf2ff;
-  color:#4285f4;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  font-size:16px;
-  font-weight:600;
-}
-.materials-link-glyph.small{
-  width:34px;
-  height:34px;
-  font-size:14px;
-}
-.materials-file-thumb{
-  width:54px;
-  height:64px;
-  border:1px solid #eef0f2;
-  border-radius:4px;
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-  justify-content:center;
-  background:#fff;
-}
-.materials-file-thumb.small{
-  width:40px;
-  height:52px;
-}
-.materials-file-badge{
-  width:30px;
-  height:18px;
-  font-size:10px;
-  color:#e67e22;
-  background:#fff3e6;
-  border:1px solid #ffd8b5;
-  border-radius:3px;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  font-weight:700;
-}
-.materials-file-kind{
-  margin-top:8px;
-  font-size:12px;
-  color:#202124;
-}
-.materials-teacher-info,
-.materials-student-info{
-  display:flex;
-  flex-direction:column;
-  gap:6px;
-}
-.materials-teacher-name,
-.materials-student-name{
-  font-size:15px;
-  color:#202124;
-}
-.materials-teacher-sub{
-  font-size:12px;
-  color:#80868b;
-  max-width:360px;
-  overflow:hidden;
-  text-overflow:ellipsis;
-  white-space:nowrap;
-}
-.materials-teacher-stats{
-  display:flex;
-  align-items:center;
-  gap:42px;
-  margin-left:auto;
-  margin-right:32px;
-}
-.materials-stat{
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-}
-.materials-stat-num{
-  color:#4d7cff;
-  font-size:18px;
-  line-height:1.2;
-}
-.materials-stat-label{
-  color:#5f6368;
-  font-size:12px;
-  margin-top:4px;
-}
-.materials-teacher-actions{
-  display:flex;
-  align-items:center;
-  gap:18px;
-  min-width:160px;
-  justify-content:flex-end;
-}
-.materials-text-btn{
-  border:none;
-  background:transparent;
-  cursor:pointer;
-  padding:0;
-  color:#4285f4;
-  font-size:14px;
-}
-.materials-text-btn.danger{
-  color:#d93025;
-}
-.materials-student-status{
-  font-size:12px;
-  color:#f2994a;
-}
-.materials-student-status.done{
-  color:#5f6368;
-}
-.materials-student-status.folder{
-  color:#5f6368;
-}
-.materials-study-btn{
-  min-width:90px;
-  height:30px;
-  border-radius:4px;
-  font-size:12px;
-  cursor:pointer;
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  color:#fff !important;
-  background:#4d90fe !important;
-  border:1px solid #4d90fe !important;
-}
-.materials-empty{
-  padding:26px 0;
-  text-align:center;
-  color:#80868b;
-  font-size:13px;
-}
-.materials-link-list{
-  display:flex;
-  flex-direction:column;
-}
-.materials-select{
-  width:100%;
-  height:36px;
-  border:1px solid #d0d7de;
-  border-radius:4px;
-  padding:0 10px;
-  font-size:14px;
 }
 
 </style>
