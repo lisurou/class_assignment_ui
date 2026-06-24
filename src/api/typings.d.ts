@@ -35,6 +35,9 @@ declare namespace API {
     correct?: string;
     score?: number;
     submitContent?: string;
+    aiEnabled?: boolean;
+    aiScore?: number;
+    aiComment?: string;
   };
 
   type Course = {
