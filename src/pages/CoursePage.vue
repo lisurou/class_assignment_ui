@@ -1,7 +1,7 @@
 <script setup>
 //路由实例
 import {useRouter} from "vue-router";
-import {ref, watch} from 'vue';
+import {ref, watch, onMounted, onUnmounted} from 'vue';
 import {useUserStore} from '@/stores/userStore';
 import {  ElDialog,ElButton, ElMessage, ElIcon } from 'element-plus';
 import { ArrowRight } from '@element-plus/icons-vue';
@@ -40,6 +40,15 @@ let studentNumber=ref('');
 
 let errorMessage=ref('');
 let successMessage=ref('');
+
+const showArchiveMenu = ref(null);
+const archiveMenuPosition = ref({ x: 0, y: 0 });
+const showArchiveManager = ref(false);
+const archivedCourseType = ref('learned');
+const archivedLearnedCourses = ref([]);
+const archivedTaughtCourses = ref([]);
+const learnedSemesterGroups = ref([]);
+const taughtSemesterGroups = ref([]);
 
 const isCourseTop = (courseId) => {
   // 检查 topCourses 中是否包含当前课程的 id
@@ -154,6 +163,124 @@ const handleCancelTop = async (course) => {
     console.log("取消置顶失败：", error);
     errorMessage.value = "服务器错误，请稍后重试";
     ElMessage.error(errorMessage.value);
+  }
+};
+
+const openArchiveMenu = (event, course) => {
+  event.preventDefault();
+  event.stopPropagation();
+  showArchiveMenu.value = course;
+  archiveMenuPosition.value = { x: event.clientX, y: event.clientY };
+};
+
+const closeArchiveMenu = () => {
+  showArchiveMenu.value = null;
+  archiveMenuPosition.value = { x: 0, y: 0 };
+};
+
+const handleGlobalClick = () => { closeArchiveMenu(); };
+onMounted(() => { document.addEventListener('click', handleGlobalClick); });
+onUnmounted(() => { document.removeEventListener('click', handleGlobalClick); });
+
+const handleArchive = async (courseId, archiveType) => {
+  try {
+    closeArchiveMenu();
+    const response = await axios.post('http://localhost:8080/archive-course', {
+      accountId: userStore.account?.accountId,
+      courseId: courseId,
+      archiveType: archiveType
+    });
+    const data = response.data;
+    if (data.success) {
+      ElMessage.success(data.message);
+      await refreshCourseList();
+    } else {
+      ElMessage.error(data.message);
+    }
+  } catch (error) {
+    console.log("归档失败：", error);
+    ElMessage.error("服务器错误，请稍后重试");
+  }
+};
+
+const refreshCourseList = async () => {
+  try {
+    const phone = userStore.account?.phone || localStorage.getItem('autoLoginPhone');
+    const password = userStore.account?.password || localStorage.getItem('autoLoginPassword');
+    if (!phone || !password) return;
+    const loginResponse = await axios.post('http://localhost:8080/login', { phone, password });
+    const loginData = loginResponse.data;
+    if (loginData.success) {
+      userStore.setTaught(loginData.taught);
+      userStore.setLearned(loginData.learned);
+      userStore.setTop(loginData.top);
+    }
+  } catch (error) {
+    console.log("刷新课程列表失败：", error);
+  }
+};
+
+const openArchiveManager = async (type) => {
+  archivedCourseType.value = type;
+  showArchiveManager.value = true;
+  await loadArchivedCourses(type);
+};
+
+const loadArchivedCourses = async (type) => {
+  try {
+    const response = await axios.post('http://localhost:8080/get-archived-courses', {
+      accountId: userStore.account?.accountId,
+      courseType: type
+    });
+    const data = response.data;
+    if (data.success) {
+      const courses = (type === 'taught' ? data.taught : data.learned) || [];
+      const groups = groupBySemester(courses);
+      if (type === 'taught') {
+        archivedTaughtCourses.value = courses;
+        taughtSemesterGroups.value = groups;
+      } else {
+        archivedLearnedCourses.value = courses;
+        learnedSemesterGroups.value = groups;
+      }
+    }
+  } catch (error) {
+    console.log("加载归档课程失败：", error);
+    ElMessage.error("加载归档课程失败");
+  }
+};
+
+const groupBySemester = (courses) => {
+  const groups = {};
+  courses.forEach(course => {
+    const semesterMatch = course.name.match(/(\d{4}-\d{4}第[一二]学期)/);
+    const semester = semesterMatch ? semesterMatch[1] : '其他';
+    if (!groups[semester]) groups[semester] = [];
+    groups[semester].push(course);
+  });
+  return Object.entries(groups)
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([name, courses]) => ({ name, courses }));
+};
+
+const unarchiveCourse = async (courseId) => {
+  try {
+    const response = await axios.post('http://localhost:8080/unarchive-course', {
+      accountId: userStore.account?.accountId,
+      courseId: courseId,
+      restoreType: archivedCourseType.value
+    });
+    const data = response.data;
+    if (data.success) {
+      ElMessage.success(data.message);
+      await loadArchivedCourses(archivedCourseType.value);
+      await refreshCourseList();
+    } else {
+      ElMessage.error(data.message);
+    }
+  } catch (error) {
+    console.log("取消归档失败：", error);
+    ElMessage.error("取消归档失败");
   }
 };
 
@@ -1141,6 +1268,7 @@ async function deleteLink(linkItem) {
                   {{ isCourseTop(course.id) ? '取消置顶' : '置顶' }}
                 </button>
               </div>
+              <div class="course-menu-dots" @click.stop="openArchiveMenu($event, course)">⋮</div>
             </div>
           </div>
       </div>
@@ -1150,6 +1278,7 @@ async function deleteLink(linkItem) {
         <button class="teach-button" @click="handleITeachClick" v-if="userStore.account?.identity==='老师'" :class="{'active':iTeach}"  >我教的</button>
         <button class="learn-button" @click="handleILearnClick" :class="{'active':iLearn}">我学的</button>
       </div>
+      <button class="archive-manager-btn" @click="openArchiveManager(identity === '老师' ? 'taught' : 'learned')">归档课程</button>
       <div class="search" :class="{ 'search-focused': isSearchFocused }">
         <input   @focus="isSearchFocused = true"  @blur="isSearchFocused = false" placeholder="搜索我学的课程">
         <button>搜</button>
@@ -1180,6 +1309,7 @@ async function deleteLink(linkItem) {
                   {{ isCourseTop(course.id) ? '取消置顶' : '置顶' }}
                 </button>
               </div>
+              <div class="course-menu-dots" @click.stop="openArchiveMenu($event, course)">⋮</div>
             </div>
           </div>
         </div>
@@ -1214,6 +1344,7 @@ async function deleteLink(linkItem) {
                   {{ isCourseTop(course.id) ? '取消置顶' : '置顶' }}
                 </button>
               </div>
+              <div class="course-menu-dots" @click.stop="openArchiveMenu($event, course)">⋮</div>
             </div>
           </div>
         </div>
@@ -1638,6 +1769,52 @@ async function deleteLink(linkItem) {
     <label class="ai-switch"><input type="checkbox" v-model="releaseAiEnabled"> 开启AI评价</label>
     <button class="confirm-release-assignment" @click="confirmReleaseAssignment">确认发布作业</button>
   </div>
+<!-- 归档菜单弹窗 -->
+<teleport to="body">
+  <div v-if="showArchiveMenu" 
+       class="archive-menu"
+       :style="{ left: archiveMenuPosition.x + 'px', top: archiveMenuPosition.y + 'px' }"
+       @click.stop>
+    <div v-if="identity !== '老师'" class="archive-menu-item" @click="handleArchive(showArchiveMenu.id, 'student')">归档</div>
+    <div v-if="identity === '老师'" class="archive-menu-item" @click="handleArchive(showArchiveMenu.id, 'teacher_self')">归档自己</div>
+    <div v-if="identity === '老师'" class="archive-menu-item" @click="handleArchive(showArchiveMenu.id, 'teacher_student')">全部归档</div>
+  </div>
+</teleport>
+<!-- 归档管理对话框 -->
+<el-dialog v-model="showArchiveManager" title="归档课程" width="70%" :before-close="() => showArchiveManager = false">
+  <div class="archive-manager-container">
+    <div class="archive-tabs">
+      <div :class="['archive-tab', { active: archivedCourseType === 'learned' }]" @click="loadArchivedCourses('learned')">我学的({{ archivedLearnedCourses.length }})</div>
+      <div v-if="identity === '老师'" :class="['archive-tab', { active: archivedCourseType === 'taught' }]" @click="loadArchivedCourses('taught')">我教的({{ archivedTaughtCourses.length }})</div>
+    </div>
+    <div class="archive-content">
+      <div class="semester-sidebar">
+        <div v-for="group in (archivedCourseType === 'taught' ? taughtSemesterGroups : learnedSemesterGroups)" :key="group.name" class="semester-item">{{ group.name }}</div>
+      </div>
+      <div class="archive-courses-list">
+        <div v-for="group in (archivedCourseType === 'taught' ? taughtSemesterGroups : learnedSemesterGroups)" :key="group.name" class="semester-courses-section">
+          <div class="semester-header">{{ group.name }}</div>
+          <div class="course-cards">
+            <div v-for="course in group.courses" :key="course.id" class="archived-course-card">
+              <div class="course-icon" :style="{ backgroundColor: archivedCourseType === 'taught' ? '#2563eb' : '#8b5cf6' }">
+                <span class="course-badge">{{ archivedCourseType === 'taught' ? '教' : '学' }}</span>
+              </div>
+              <div class="course-info">
+                <div class="course-id">{{ course.id }}</div>
+                <div class="course-name">{{ course.name }}</div>
+                <div class="course-members">成员{{ course.number }}人</div>
+              </div>
+              <div class="course-actions">
+                <button class="restore-btn" @click="unarchiveCourse(course.id)">恢复</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div v-if="(archivedCourseType === 'taught' ? taughtSemesterGroups : learnedSemesterGroups).length === 0" class="no-courses">暂无归档课程</div>
+      </div>
+    </div>
+  </div>
+</el-dialog>
 </template>
 <style>
 .breadcrumb {
@@ -2597,4 +2774,36 @@ button {
   font-size: 14px;
   cursor: pointer;
 }
+.archive-manager-btn{background:#fff;border:1px solid #d1d5db;padding:10px 20px;border-radius:6px;font-size:14px;color:#374151;cursor:pointer;margin-left:auto;margin-right:16px}
+.archive-manager-btn:hover{background:#f9fafb;border-color:#9ca3af}
+.course-menu-dots{font-size:20px;color:#6b7280;cursor:pointer;padding:4px 8px}
+.course-menu-dots:hover{color:#374151}
+.archive-menu{position:fixed;background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 10px 25px rgba(0,0,0,.1);z-index:1000;min-width:120px}
+.archive-menu-item{padding:10px 16px;cursor:pointer;font-size:14px;color:#374151;transition:background .2s}
+.archive-menu-item:hover{background:#f3f4f6}
+.archive-manager-container{display:flex;flex-direction:column;gap:16px}
+.archive-tabs{display:flex;gap:20px;border-bottom:1px solid #e5e7eb;padding-bottom:12px}
+.archive-tab{padding:8px 16px;cursor:pointer;font-size:14px;color:#6b7280;border-bottom:2px solid transparent;transition:all .2s}
+.archive-tab.active{color:#2563eb;border-bottom-color:#2563eb}
+.archive-tab:hover{color:#374151}
+.archive-content{display:flex;gap:20px;min-height:400px}
+.semester-sidebar{width:200px;border-right:1px solid #e5e7eb;padding-right:16px}
+.semester-item{padding:12px 16px;cursor:pointer;font-size:14px;color:#374151;border-radius:6px;margin-bottom:8px;transition:background .2s}
+.semester-item:hover{background:#f3f4f6}
+.archive-courses-list{flex:1}
+.semester-courses-section{margin-bottom:24px}
+.semester-header{font-size:16px;font-weight:600;color:#111827;margin-bottom:12px}
+.course-cards{display:flex;flex-direction:column;gap:12px}
+.archived-course-card{display:flex;align-items:center;gap:16px;padding:16px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;transition:box-shadow .2s}
+.archived-course-card:hover{box-shadow:0 4px 12px rgba(0,0,0,.05)}
+.course-icon{width:60px;height:60px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.course-badge{background:rgba(255,255,255,.9);color:#6b21a8;padding:4px 8px;border-radius:4px;font-size:12px;font-weight:600}
+.course-info{flex:1}
+.course-id{font-size:12px;color:#6b7280;margin-bottom:4px}
+.course-name{font-size:16px;font-weight:600;color:#111827;margin-bottom:4px}
+.course-members{font-size:12px;color:#6b7280}
+.course-actions{display:flex;align-items:center;gap:12px}
+.restore-btn{background:#2563eb;color:#fff;border:none;padding:8px 16px;border-radius:6px;font-size:14px;cursor:pointer;transition:background .2s}
+.restore-btn:hover{background:#1d4ed8}
+.no-courses{text-align:center;color:#9ca3af;padding:40px;font-size:14px}
 </style>
