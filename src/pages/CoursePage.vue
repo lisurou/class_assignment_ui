@@ -7,6 +7,7 @@ import {  ElDialog,ElButton, ElMessage, ElIcon } from 'element-plus';
 import { ArrowRight } from '@element-plus/icons-vue';
 import {computed} from 'vue';
 import axios from 'axios';
+import TopicPage from '@/components/TopicPage.vue';
 
 const router = useRouter()
 const isSearchFocused = ref(false);
@@ -502,6 +503,7 @@ const releaseDeadline=ref('');
 const releaseType=ref('');
 const releaseDetail=ref('');
 const releaseScore=ref('');
+const releaseAiEnabled=ref(false);
 // 修改 CoursePage.vue 中 confirmReleaseAssignment 方法
 const confirmReleaseAssignment = async () => {
   try {
@@ -532,7 +534,8 @@ const confirmReleaseAssignment = async () => {
       deadline: releaseDeadline.value,
       assignmentType: releaseType.value,
       content: releaseDetail.value,
-      totalScore: totalScore  // 使用转换后的数字类型
+      totalScore: totalScore,  // 使用转换后的数字类型
+      aiEnabled: releaseAiEnabled.value
     };
 
     const response = await axios.post("http://localhost:8080/release-assignment", {
@@ -551,6 +554,7 @@ const confirmReleaseAssignment = async () => {
       releaseType.value = '';
       releaseDetail.value = '';
       releaseScore.value = '';
+      releaseAiEnabled.value = false;
       displayReleaseAssignment.value = false;
     } else {
       //发布成功后立即刷新作业列表
@@ -1252,9 +1256,12 @@ async function deleteLink(linkItem) {
           <button class="" @click="handleClickTopic" :class="{'active':topic}">话题</button>
           <button class="" @click="handleClickInteractiveAnswer" :class="{'active':interactiveAnswer}">互动答题</button>
         </div>
-        <div class="course-details-blank" v-if="content||interactiveCourseware||test||tencentConference||givePublicNotice||topic||interactiveAnswer">
+        <div class="course-details-blank" v-if="content||interactiveCourseware||test||tencentConference||givePublicNotice||interactiveAnswer">
           <img src="@/assets/课堂派课程详情空白页.png" alt="课堂派课程详情空白页">
           <span>这里是一片荒地</span>
+        </div>
+        <div class="course-learning-body" v-if="topic">
+          <TopicPage :course-id="currentCourseKey" :course-name="courseName" />
         </div>
         <div class="course-learning-body" v-if="data">
           <div class="materials-panel">
@@ -1452,6 +1459,10 @@ async function deleteLink(linkItem) {
       <div class="assignment-grade" v-if="assignmentDetail.correct==='已批改'">
         成绩：{{ assignmentDetail.score }}
       </div>
+      <div class="ai-comment" v-if="assignmentDetail.aiComment">
+        <div>AI评分：{{ assignmentDetail.aiScore }}</div>
+        <div>AI评语：{{ assignmentDetail.aiComment }}</div>
+      </div>
       <div v-if="!assignmentDetail.correct ||assignmentDetail.correct==='未批改'">
         <input placeholder="请输入分值" v-model="score">
         <button @click="handleConfirmCorrect(assignmentDetail)">确认批改</button>
@@ -1473,6 +1484,10 @@ async function deleteLink(linkItem) {
     <!-- 成绩展示区域 - 添加空值判断 -->
     <div class="assignment-grade" v-if="LearnAssignmentDetail.correct==='已批改'">
       成绩：{{ LearnAssignmentDetail.score }}
+    </div>
+    <div class="ai-comment" v-if="LearnAssignmentDetail.aiComment">
+      <div>AI评分：{{ LearnAssignmentDetail.aiScore }}</div>
+      <div>AI评语：{{ LearnAssignmentDetail.aiComment }}</div>
     </div>
     <div v-if="LearnAssignmentDetail.submit==='已提交'">已提交</div>
     <div v-else>未提交</div>
@@ -1620,6 +1635,7 @@ async function deleteLink(linkItem) {
     <input v-model="releaseType" placeholder="作业类型">
     <input v-model="releaseDetail" placeholder="作业详情">
     <input v-model="releaseScore" placeholder="总分">
+    <label class="ai-switch"><input type="checkbox" v-model="releaseAiEnabled"> 开启AI评价</label>
     <button class="confirm-release-assignment" @click="confirmReleaseAssignment">确认发布作业</button>
   </div>
 </template>
@@ -1644,8 +1660,18 @@ async function deleteLink(linkItem) {
   font-size: 16px;
 }
 .release-assignment{
+  position: absolute;
   display: flex;
   flex-direction: column;
+  width: 600px;
+  top: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 20px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px 0 rgba(0, 0, 0, .1);
+  z-index: 100;
 }
 .submit-button{
   border:none;
@@ -2551,5 +2577,24 @@ button {
 .personal-setting img {
   width: 114px;
   padding: 16px;
+}
+.ai-comment{
+  margin-top: 10px;
+  padding: 10px;
+  background-color: #f0f7ff;
+  border-radius: 6px;
+  border: 1px solid #d4e8ff;
+}
+.ai-comment div{
+  font-size: 13px;
+  line-height: 1.6;
+}
+.ai-switch{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  font-size: 14px;
+  cursor: pointer;
 }
 </style>
