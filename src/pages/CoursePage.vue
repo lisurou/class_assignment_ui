@@ -1,11 +1,10 @@
 <script setup>
 //路由实例
 import {useRouter} from "vue-router";
-import {ref, watch, onMounted, onUnmounted} from 'vue';
+import {ref, watch, onMounted, onUnmounted, computed} from 'vue';
 import {useUserStore} from '@/stores/userStore';
 import {  ElDialog,ElButton, ElMessage, ElIcon } from 'element-plus';
 import { ArrowRight } from '@element-plus/icons-vue';
-import {computed} from 'vue';
 import axios from 'axios';
 import CourseMaterials from '@/components/CourseMaterials.vue';
 import CourseAssignments from '@/components/CourseAssignments.vue';
@@ -21,17 +20,54 @@ const createDialogVisible=ref(false);
 const taughtCourses = computed(() => userStore.taught || []);
 const learnedCourses = computed(() => userStore.learned || []);
 const topCourses = computed(() => userStore.top || []);
-const assignmentDetails = computed(() => userStore.assignmentDetails || []);
+const assignmentDetails = computed(() => (userStore.assignmentDetails || []).filter(Boolean));
 const course=computed(() => userStore.course || []);
 const showCourseDetails=ref(false);
-const showAssignmentSubmit=ref(false);
 const showTeacherAssignment=ref(false);
+const showLearnAssignment=ref(false);
+const displayReleaseAssignment=ref(false);
 const currentAssignmentDetail = ref(null);
-const score=ref('');
 let iTeach=ref(userStore.account?.identity === '老师');
 let iLearn=ref(userStore.account?.identity !== '老师');
-const showLearnAssignment=ref(false);
 const currentCourseId = ref('');
+const learnAssignmentDetail = ref({});
+const submitContent = ref('');
+const selectedSubmissionFile = ref(null);
+const studentSubmitEditing = ref(false);
+const teacherAssignmentTab = ref('detail');
+const learnAssignmentTab = ref('detail');
+const teacherHomeworkFilter = ref('all');
+const teacherReviewFilter = ref('all');
+const teacherReviewKeyword = ref('');
+const teacherCommentDraft = ref('');
+const teacherCommentRealName = ref(true);
+const teacherCommentAttachmentOnly = ref(false);
+const activeTeacherAssignmentMenu = ref('');
+const teacherSubmissionDetails = ref([]);
+const scoreDrafts = ref({});
+const savingScoreKeys = ref([]);
+const releaseEditMode = ref(false);
+const editingAssignmentId = ref('');
+const releaseTitle=ref('');
+const releaseDeadline=ref('');
+const releaseType=ref('个人作业');
+const releaseDetail=ref('');
+const releaseTag=ref('');
+const releaseKnowledgeAgreement=ref('');
+const releaseEnvironment=ref('');
+const releaseChapter=ref('');
+const showReleaseSwitch = ref(true);
+const showReleasePublishSettings = ref(true);
+const releaseImmediate = ref(true);
+const releasePublishTime = ref('');
+const releasePublishTimeReadonly = ref(true);
+const releaseAllowFormat = ref('all');
+const releaseScore=ref('');
+const releaseLateForbidden = ref(false);
+const releaseDuplicateCheck = ref(false);
+const releaseDuplicateThreshold = ref('');
+const releaseAutoReturn = ref(false);
+const releaseAiEnabled=ref(false);
 
 let courseCode=ref('');
 let courseName=ref('');
@@ -51,6 +87,8 @@ const archivedLearnedCourses = ref([]);
 const archivedTaughtCourses = ref([]);
 const learnedSemesterGroups = ref([]);
 const taughtSemesterGroups = ref([]);
+
+// 移除了之前 watch(releaseImmediate) 清空时间的逻辑，让它保留初始化时生成的当前时间
 
 const isCourseTop = (courseId) => {
   // 检查 topCourses 中是否包含当前课程的 id
@@ -301,6 +339,11 @@ function goToCourse(){
   displayReleaseAssignment.value = false;
   currentCourseId.value = '';
 }
+function backToCourseContent(){
+  showTeacherAssignment.value = false;
+  showLearnAssignment.value = false;
+  displayReleaseAssignment.value = false;
+}
 function handleITeachClick(){
   iTeach.value=true;
   iLearn.value=false;
@@ -460,42 +503,360 @@ function handleClickInteractiveAnswer(){
   topic.value=false;
   interactiveAnswer.value=true;
 }
-let LearnAssignmentDetail = ref({});
-//点击提交作业，展示提交作业的页面
-function handleAssignmentSubmit(assignmentDetail){
-  showLearnAssignment.value = true;
-  LearnAssignmentDetail.value = assignmentDetail;
-}
-//点击查看已提交作业，展示批改作业页面
-const handleCheckAssignmentSubmit=async(assignmentDetail)=>{
- //点击查看，就到数据库中进行查询操作，课程码，作业码，已提交，共同确认，不用携带参数，用pinia，账号，返回我教的的作业
+const courseAssignmentsMode = computed(() => (
+  showTeacherAssignment.value || showLearnAssignment.value || displayReleaseAssignment.value
+) ? 'detail' : 'list');
+const assignmentOverlayActive = computed(() => (
+  showTeacherAssignment.value || showLearnAssignment.value || displayReleaseAssignment.value
+));
+const currentHeaderThirdCrumb = computed(() => {
+  if (showTeacherAssignment.value || showLearnAssignment.value) {
+    return '作业详情';
+  }
+  if (displayReleaseAssignment.value) {
+    return releaseEditMode.value ? '编辑作业' : '添加作业';
+  }
+  return '';
+});
+
+const validAssignmentDetails = computed(() => assignmentDetails.value);
+
+const studentVisibleAssignmentDetails = computed(() => validAssignmentDetails.value.filter(detail => detail?.assignmentId));
+
+const filteredTeacherAssignments = computed(() => {
+  const list = validAssignmentDetails.value.filter(detail => detail?.assignmentId);
+  if (teacherHomeworkFilter.value === 'pending') {
+    return list.filter(detail => getTeacherAssignmentStageText(detail) !== '已批完');
+  }
+  if (teacherHomeworkFilter.value === 'corrected') {
+    return list.filter(detail => getTeacherAssignmentStageText(detail) === '已批完');
+  }
+  return list;
+});
+
+const teacherSubmissionStats = computed(() => {
+  const stats = { all: 0, unreviewed: 0, reviewed: 0, unsubmitted: 0 };
+  teacherSubmissionDetails.value.forEach(detail => {
+    stats.all += 1;
+    if (detail?.submit === '已提交') {
+      if (detail?.correct === '已批改') {
+        stats.reviewed += 1;
+      } else {
+        stats.unreviewed += 1;
+      }
+    } else {
+      stats.unsubmitted += 1;
+    }
+  });
+  return stats;
+});
+
+const filteredTeacherSubmissionDetails = computed(() => teacherSubmissionDetails.value.filter(detail => {
+  const keyword = teacherReviewKeyword.value.trim();
+  const keywordMatched = !keyword || [detail?.accountId, detail?.studentId, detail?.studentName, detail?.id]
+    .filter(Boolean)
+    .some(value => String(value).includes(keyword));
+
+  if (!keywordMatched) {
+    return false;
+  }
+  if (teacherReviewFilter.value === 'reviewed') {
+    return detail?.correct === '已批改';
+  }
+  if (teacherReviewFilter.value === 'unreviewed') {
+    return detail?.submit === '已提交' && detail?.correct !== '已批改';
+  }
+  if (teacherReviewFilter.value === 'unsubmitted') {
+    return detail?.submit !== '已提交';
+  }
+  return true;
+}));
+
+const studentSubmitHasSubmitted = computed(() => learnAssignmentDetail.value?.submit === '已提交');
+
+const releaseSubmitButtonText = computed(() => releaseEditMode.value ? '保存' : '确认');
+
+const normalizeUploadedFile = (file) => {
+  if (!file) return null;
+  const size = Number(file.size || 0);
+  const sizeText = size < 1024 * 1024
+    ? `${Math.max(size / 1024, 0.1).toFixed(1)} KB`
+    : `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  return {
+    name: file.name,
+    size,
+    sizeText,
+    rawFile: file
+  };
+};
+
+const extractAssignmentFileNameFromHeaders = (headers, fallbackName) => {
+  const disposition = headers?.['content-disposition'] || headers?.['Content-Disposition'];
+  if (!disposition) return fallbackName;
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) return decodeURIComponent(utf8Match[1]);
+  const normalMatch = disposition.match(/filename="?([^"]+)"?/i);
+  return normalMatch?.[1] || fallbackName;
+};
+
+const normalizeAssignmentFile = (assignmentDetail) => {
+  if (!assignmentDetail?.fileName) return null;
+  const size = Number(assignmentDetail?.fileSize || 0);
+  const sizeText = size
+    ? (size < 1024 * 1024
+      ? `${Math.max(size / 1024, 0.1).toFixed(1)} KB`
+      : `${(size / (1024 * 1024)).toFixed(1)} MB`)
+    : '';
+  return {
+    name: assignmentDetail.fileName,
+    size,
+    sizeText,
+    rawFile: null,
+    fileDownloadUrl: assignmentDetail?.fileDownloadUrl || ''
+  };
+};
+
+const syncScoreDrafts = (list) => {
+  const nextDrafts = { ...scoreDrafts.value };
+  (list || []).forEach(detail => {
+    nextDrafts[getDraftScore(detail)] = detail?.score ?? '';
+  });
+  scoreDrafts.value = nextDrafts;
+};
+
+const syncCurrentAssignmentFromList = () => {
+  if (!currentAssignmentDetail.value?.assignmentId) {
+  } else {
+    const latest = assignmentDetails.value.find(detail => detail?.assignmentId === currentAssignmentDetail.value.assignmentId);
+    if (latest) {
+      currentAssignmentDetail.value = { ...latest };
+    }
+  }
+  if (!learnAssignmentDetail.value?.assignmentId) {
+    return;
+  }
+  const latestLearnAssignment = assignmentDetails.value.find(detail => detail?.assignmentId === learnAssignmentDetail.value.assignmentId);
+  if (latestLearnAssignment) {
+    learnAssignmentDetail.value = { ...latestLearnAssignment };
+    selectedSubmissionFile.value = normalizeAssignmentFile(latestLearnAssignment);
+  }
+};
+
+const resetReleaseForm = (assignmentDetail = null) => {
+  releaseTitle.value = assignmentDetail?.title || '';
+  releaseType.value = assignmentDetail?.assignmentType || '个人作业';
+  releaseDetail.value = assignmentDetail?.content || '';
+  releaseTag.value = assignmentDetail?.tag || '';
+  releaseKnowledgeAgreement.value = assignmentDetail?.knowledgeAgreement || '';
+  releaseEnvironment.value = assignmentDetail?.environment || '';
+  releaseChapter.value = assignmentDetail?.chapter || '';
+  releaseScore.value = assignmentDetail?.totalScore || '100';
+  releaseAiEnabled.value = Boolean(assignmentDetail?.aiEnabled);
+  // Default to false (closed) when creating a new assignment, otherwise use existing state
+  releaseImmediate.value = assignmentDetail ? !assignmentDetail.publishTime : false;
+  // Initialize to current time for publishTime and empty for deadline if not set
+  if (!assignmentDetail) {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    releasePublishTime.value = `${year}-${month}-${day} ${hours}:${minutes}`;
+    releaseDeadline.value = '';
+  } else {
+    // 确保从后端获取的时间字符串被正确格式化为 YYYY-MM-DD HH:mm，以便 el-date-picker 能够正确回显
+    const formatTime = (timeStr) => {
+      if (!timeStr) return '';
+      // 处理可能带有 'T' 或秒数 '.000Z' 的时间字符串
+      return timeStr.replace('T', ' ').substring(0, 16);
+    };
+    releasePublishTime.value = formatTime(assignmentDetail?.publishTime);
+    releaseDeadline.value = formatTime(assignmentDetail?.deadline);
+  }
+  releaseAllowFormat.value = assignmentDetail?.allowFormat || 'all';
+  releaseLateForbidden.value = Boolean(assignmentDetail?.lateForbidden);
+  releaseDuplicateCheck.value = Boolean(assignmentDetail?.duplicateCheck);
+  releaseDuplicateThreshold.value = assignmentDetail?.duplicateThreshold || '30';
+  releaseAutoReturn.value = Boolean(assignmentDetail?.autoReturn);
+};
+
+const getTeacherAssignmentStageText = (assignmentDetail) => {
+  if (!isAssignmentPublished(assignmentDetail)) {
+    return '未发布';
+  }
+  const stats = getTeacherAssignmentStats(assignmentDetail);
+  if (stats.pending === 0 && stats.missing === 0 && (stats.corrected > 0 || assignmentDetail?.correct === '已批改')) {
+    return '已批完';
+  }
+  if (stats.pending > 0 || stats.missing > 0) {
+    return '未批完';
+  }
+  if (stats.corrected > 0) {
+    return '已批作业';
+  }
+  return '已发布';
+};
+
+const isAssignmentPublished = (assignmentDetail) => Boolean(
+  assignmentDetail?.assignmentId && (assignmentDetail?.title || assignmentDetail?.deadline || assignmentDetail?.content)
+);
+
+const formatTeacherDeadlineShort = (deadline) => {
+  if (!deadline) return '暂无';
+  return String(deadline).replace('T', ' ').slice(0, 16);
+};
+
+const getTeacherAssignmentStats = (assignmentDetail) => {
+  const corrected = Number(assignmentDetail?.correctedCount);
+  const pending = Number(assignmentDetail?.pendingCount);
+  const missing = Number(assignmentDetail?.missingCount);
+  return {
+    corrected: Number.isFinite(corrected) ? corrected : (assignmentDetail?.correct === '已批改' ? 1 : 0),
+    pending: Number.isFinite(pending) ? pending : (assignmentDetail?.submit === '已提交' && assignmentDetail?.correct !== '已批改' ? 1 : 0),
+    missing: Number.isFinite(missing) ? missing : (assignmentDetail?.submit !== '已提交' ? 1 : 0),
+  };
+};
+
+const getDraftScore = (assignmentDetail) => `${assignmentDetail?.assignmentId || 'assignment'}_${assignmentDetail?.accountId || assignmentDetail?.id || 'unknown'}`;
+
+const isScoreSaving = (assignmentDetail) => savingScoreKeys.value.includes(getDraftScore(assignmentDetail));
+
+const handleSubmissionFileChange = (event) => {
+  const file = event?.target?.files?.[0];
+  if (!file) return;
+  selectedSubmissionFile.value = normalizeUploadedFile(file);
+};
+
+const downloadAssignmentFile = async (assignmentDetail, fallbackName) => {
+  if (!assignmentDetail?.assignmentId) {
+    ElMessage.warning('未找到作业附件信息');
+    return;
+  }
+  try {
+    const response = await axios.get(`${API_BASE}/assignment-file`, {
+      params: {
+        accountId: assignmentDetail?.accountId || userStore.account?.accountId,
+        id: assignmentDetail?.id || currentCourseId.value,
+        assignmentId: assignmentDetail.assignmentId
+      },
+      responseType: 'blob'
+    });
+    const blob = new Blob([response.data]);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = extractAssignmentFileNameFromHeaders(response.headers, fallbackName || assignmentDetail?.fileName || 'assignment-file');
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    console.log('下载作业附件失败：', error);
+    ElMessage.error('下载作业附件失败，请稍后重试');
+  }
+};
+
+const downloadSubmittedFile = async () => {
+  if (!learnAssignmentDetail.value?.fileName && !selectedSubmissionFile.value?.rawFile) {
+    ElMessage.warning('当前没有可下载的附件');
+    return;
+  }
+  if (selectedSubmissionFile.value?.rawFile && !learnAssignmentDetail.value?.fileName) {
+    const objectUrl = URL.createObjectURL(selectedSubmissionFile.value.rawFile);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = selectedSubmissionFile.value.name || '作业附件';
+    link.click();
+    URL.revokeObjectURL(objectUrl);
+    return;
+  }
+  await downloadAssignmentFile(learnAssignmentDetail.value, selectedSubmissionFile.value?.name);
+};
+
+const downloadTeacherSubmissionFile = async (assignmentDetail) => {
+  if (!assignmentDetail?.fileName) {
+    ElMessage.info('该提交没有附件');
+    return;
+  }
+  await downloadAssignmentFile(assignmentDetail, assignmentDetail.fileName);
+};
+
+const getTeacherAiReviewEnabled = () => Boolean(currentAssignmentDetail.value?.aiEnabled);
+
+const handleTeacherAiReviewToggle = async (assignmentDetail, checked) => {
+  if (!assignmentDetail?.assignmentId) return;
+  try {
+    const response = await axios.post(`${API_BASE}/toggle-assignment-ai`, {
+      id: currentCourseId.value,
+      assignmentId: assignmentDetail.assignmentId,
+      assignment: {
+        aiEnabled: checked
+      }
+    });
+    const data = response.data;
+    if (!data.success) {
+      ElMessage.error(data.message || 'AI预批阅设置失败');
+      return;
+    }
+    await fetchLatestAssignments();
+    currentAssignmentDetail.value = { ...(currentAssignmentDetail.value || assignmentDetail), aiEnabled: checked };
+    await loadTeacherSubmissionDetails(currentAssignmentDetail.value);
+    ElMessage.success(data.message || (checked ? '已开启AI预批阅' : '已关闭AI预批阅'));
+  } catch (error) {
+    console.log('AI预批阅设置失败：', error);
+    ElMessage.error('AI预批阅设置失败，请稍后重试');
+  }
+};
+
+const loadTeacherSubmissionDetails = async (assignmentDetail) => {
   try{
     const response=await axios.post('http://localhost:8080/check-assignment-submit',{
       accountId:userStore.account?.accountId,
-      id:course.value.id,
+      id:course.value?.id || currentCourseId.value,
       assignmentId:assignmentDetail.assignmentId
     });
     const data=response.data;
     if(data.success){
       successMessage.value=data.message;
-      userStore.setAssignmentDetails(data.assignments);
-      // 保存当前查看的作业详情
-      currentAssignmentDetail.value = assignmentDetail;
-      console.log("已提交的作业有："+data.assignments);
-      ElMessage.success(successMessage.value);
-      //所有assignment的title和content相同，
-      showTeacherAssignment.value=true;
+      teacherSubmissionDetails.value = (data.assignments || []).filter(Boolean);
+      syncScoreDrafts(teacherSubmissionDetails.value);
     }else {
       errorMessage.value = data.message;
+      teacherSubmissionDetails.value = [];
       ElMessage.error(errorMessage.value);
-      console.log(errorMessage.value);
     }
   }catch(error){
     console.log("已提交作业页面加载失败：",error);
     errorMessage.value="服务器错误，请稍后重试";
+    teacherSubmissionDetails.value = [];
     ElMessage.error(errorMessage.value);
   }
+};
+
+const handleViewLearnAssignmentDetail = (assignmentDetail) => {
+  learnAssignmentDetail.value = { ...assignmentDetail };
+  showLearnAssignment.value = true;
+  learnAssignmentTab.value = 'detail';
+  submitContent.value = assignmentDetail?.submitContent || '';
+  studentSubmitEditing.value = assignmentDetail?.submit !== '已提交';
+  selectedSubmissionFile.value = normalizeAssignmentFile(assignmentDetail);
+};
+
+function handleAssignmentSubmit(assignmentDetail){
+  handleViewLearnAssignmentDetail(assignmentDetail);
+  learnAssignmentTab.value = 'submit';
 }
+
+const openTeacherAssignmentDetail = async (assignmentDetail) => {
+  currentAssignmentDetail.value = { ...assignmentDetail };
+  teacherAssignmentTab.value = 'detail';
+  teacherReviewFilter.value = 'all';
+  teacherReviewKeyword.value = '';
+  activeTeacherAssignmentMenu.value = '';
+  await loadTeacherSubmissionDetails(assignmentDetail);
+  showTeacherAssignment.value = true;
+};
 
 //展示作业的详情
 const handleDetail=async(id)=>{
@@ -526,69 +887,153 @@ const handleDetail=async(id)=>{
     ElMessage.error(errorMessage.value);
   }
 }
-//批改作业
-const handleConfirmCorrect=async(assignmentDetail)=>{
+
+const handleScoreBlur = async (assignmentDetail) => {
+  if (assignmentDetail?.submit !== '已提交') return;
+  const draftKey = getDraftScore(assignmentDetail);
+  const nextScore = scoreDrafts.value[draftKey];
+  if (nextScore === '' || nextScore === null || nextScore === undefined) {
+    return;
+  }
+  const numericScore = Number(nextScore);
+  if (Number.isNaN(numericScore)) {
+    ElMessage.error('请输入有效分数');
+    scoreDrafts.value[draftKey] = assignmentDetail?.score ?? '';
+    return;
+  }
+  if (String(assignmentDetail?.score ?? '') === String(numericScore)) {
+    return;
+  }
+
+  savingScoreKeys.value = [...savingScoreKeys.value, draftKey];
   try{
-    //将分数储存到对应账号\对应课程\对应作业\的\分数\里，批改好，将已经提交的作业从后端返回再渲染一次
     const response=await axios.post('http://localhost:8080/correct-assignment',{
       accountId:assignmentDetail.accountId,
       id:assignmentDetail.id,
       assignmentId:assignmentDetail.assignmentId,
-      score:score.value,
+      score:numericScore,
     });
     const data=response.data;
     if(data.success){
       successMessage.value=data.message;
-      // 先关闭显示
-      showTeacherAssignment.value = false;
-      userStore.setAssignmentDetails(data.assignments);
-      // 重置分数输入
-      score.value = '';
-      // 重新打开显示（触发重新渲染）
-      setTimeout(() => {
-        showTeacherAssignment.value = true;
-      }, 0);
-      // 保存当前查看的作业详情
-      currentAssignmentDetail.value = assignmentDetail;
-      console.log("已提交的作业有："+data.assignments);
+      if (Array.isArray(data.assignments)) {
+        teacherSubmissionDetails.value = data.assignments.filter(Boolean);
+        syncScoreDrafts(teacherSubmissionDetails.value);
+      } else {
+        teacherSubmissionDetails.value = teacherSubmissionDetails.value.map(detail => (
+          getDraftScore(detail) === draftKey ? { ...detail, score: numericScore, correct: '已批改' } : detail
+        ));
+      }
+      await fetchLatestAssignments();
+      syncCurrentAssignmentFromList();
       ElMessage.success(successMessage.value);
-      showTeacherAssignment.value=true;
     }else {
       errorMessage.value = data.message;
       ElMessage.error(errorMessage.value);
-      console.log(errorMessage.value);
+      scoreDrafts.value[draftKey] = assignmentDetail?.score ?? '';
     }
   }catch(error){
     console.log("批改作业失败：",error);
     errorMessage.value="服务器错误，请稍后重试";
+    scoreDrafts.value[draftKey] = assignmentDetail?.score ?? '';
     ElMessage.error(errorMessage.value);
+  } finally {
+    savingScoreKeys.value = savingScoreKeys.value.filter(key => key !== draftKey);
   }
-}
+};
 
-const submitContent = ref('');
+const startResubmit = () => {
+  studentSubmitEditing.value = true;
+  learnAssignmentTab.value = 'submit';
+  submitContent.value = learnAssignmentDetail.value?.submitContent || '';
+};
+
+const handleDeleteSubmittedFile = async () => {
+  if (selectedSubmissionFile.value?.rawFile) {
+    selectedSubmissionFile.value = learnAssignmentDetail.value?.fileName
+      ? normalizeAssignmentFile(learnAssignmentDetail.value)
+      : null;
+    ElMessage.success('已移除待上传附件');
+    return;
+  }
+  if (!learnAssignmentDetail.value?.fileName) {
+    selectedSubmissionFile.value = null;
+    return;
+  }
+  try {
+    const response = await axios.delete(`${API_BASE}/assignment-submission-file`, {
+      params: {
+        accountId: userStore.account?.accountId,
+        id: learnAssignmentDetail.value.id || currentCourseId.value,
+        assignmentId: learnAssignmentDetail.value.assignmentId
+      }
+    });
+    const data = response.data;
+    if (!data.success) {
+      ElMessage.error(data.message || '删除附件失败');
+      return;
+    }
+    const assignment = data.assignment || {};
+    learnAssignmentDetail.value = {
+      ...learnAssignmentDetail.value,
+      ...assignment,
+      fileName: '',
+      fileStoredName: '',
+      fileSize: null,
+      fileContentType: '',
+      fileDownloadUrl: ''
+    };
+    selectedSubmissionFile.value = null;
+    studentSubmitEditing.value = true;
+    learnAssignmentTab.value = 'submit';
+    await fetchLatestAssignments();
+    ElMessage.success(data.message || '附件删除成功');
+  } catch (error) {
+    console.log('删除附件失败：', error);
+    ElMessage.error('删除附件失败，请稍后重试');
+  }
+};
+
 //提交作业
 const handleConfirmSubmit=async()=>{
-  // 验证提交内容不为空
-  if (!submitContent.value) {
-    errorMessage.value = "提交内容不能为空";
+  const trimmedSubmitContent = submitContent.value.trim();
+  if (!trimmedSubmitContent && !selectedSubmissionFile.value?.rawFile && !learnAssignmentDetail.value?.fileName) {
+    errorMessage.value = "请至少填写留言或上传附件";
     ElMessage.error(errorMessage.value);
     return;
   }
-  //点击确认提交，将课程码，账号，作业码,提交内容返回给后端储存起来
   try{
-    const response=await axios.post("http://localhost:8080/assignment-submit",{
-      id: LearnAssignmentDetail.value.id,
-      accountId: userStore.account?.accountId,
-      assignmentId: LearnAssignmentDetail.value.assignmentId,
-      submitContent: submitContent.value
-    });
+    const formData = new FormData();
+    formData.append('id', learnAssignmentDetail.value.id || currentCourseId.value);
+    formData.append('accountId', userStore.account?.accountId || '');
+    formData.append('assignmentId', learnAssignmentDetail.value.assignmentId || '');
+    if (trimmedSubmitContent) {
+      formData.append('submitContent', trimmedSubmitContent);
+    }
+    if (selectedSubmissionFile.value?.rawFile) {
+      formData.append('file', selectedSubmissionFile.value.rawFile);
+    }
+    const response=await axios.post(`${API_BASE}/assignment-submit`, formData);
     const data=response.data;
     if (data.success) {
       successMessage.value = data.message;
       userStore.setAssignmentSubmit(data.assignment || {});  // 确保设置一个对象
+      learnAssignmentDetail.value = {
+        ...learnAssignmentDetail.value,
+        ...(data.assignment || {}),
+        submit: '已提交',
+        submitContent: trimmedSubmitContent,
+        fileName: selectedSubmissionFile.value?.name || learnAssignmentDetail.value?.fileName
+      };
+      selectedSubmissionFile.value = normalizeAssignmentFile({
+        ...learnAssignmentDetail.value,
+        fileName: selectedSubmissionFile.value?.name || learnAssignmentDetail.value?.fileName
+      }) || selectedSubmissionFile.value;
+      studentSubmitEditing.value = false;
+      learnAssignmentTab.value = 'submit';
+      await fetchLatestAssignments();
+      syncCurrentAssignmentFromList();
       ElMessage.success(successMessage.value);
-      showLearnAssignment.value = false;
-      submitContent.value='';
     } else {
       errorMessage.value = data.message;
       ElMessage.error(errorMessage.value);
@@ -603,7 +1048,9 @@ const handleConfirmSubmit=async()=>{
 //返回按钮
 function fromTeachBack(){
   showTeacherAssignment.value=false;
-  // 返回时重新请求当前课程的最新作业数据
+  teacherAssignmentTab.value = 'detail';
+  teacherSubmissionDetails.value = [];
+  activeTeacherAssignmentMenu.value = '';
   fetchLatestAssignments();
 }
 // 新增：重新获取当前课程作业数据的方法
@@ -617,6 +1064,7 @@ const fetchLatestAssignments = async () => {
     if (response.data.success) {
       // 用最新数据更新Pinia状态
       userStore.setAssignmentDetails(response.data.assignments);
+      syncCurrentAssignmentFromList();
     }
   } catch (error) {
     console.error("返回时刷新作业失败：", error);
@@ -624,27 +1072,88 @@ const fetchLatestAssignments = async () => {
 };
 function fromLearnBack(){
   showLearnAssignment.value=false;
- LearnAssignmentDetail.value={};
+  learnAssignmentTab.value = 'detail';
+  studentSubmitEditing.value = false;
+  learnAssignmentDetail.value={};
+  submitContent.value = '';
+  selectedSubmissionFile.value = null;
 }
 
-const releaseTitle=ref('');
-const releaseDeadline=ref('');
-const releaseType=ref('');
-const releaseDetail=ref('');
-const releaseScore=ref('');
-const releaseAiEnabled=ref(false);
+const openCreateAssignmentDialog = () => {
+  releaseEditMode.value = false;
+  editingAssignmentId.value = '';
+  resetReleaseForm();
+  releasePublishTimeReadonly.value = releaseImmediate.value;
+  displayReleaseAssignment.value = true;
+  activeTeacherAssignmentMenu.value = '';
+};
+
+const openPublishAssignmentDialog = (assignmentDetail) => {
+  currentAssignmentDetail.value = assignmentDetail ? { ...assignmentDetail } : currentAssignmentDetail.value;
+  openCreateAssignmentDialog();
+};
+
+const openEditAssignmentDialog = (assignmentDetail) => {
+  releaseEditMode.value = true;
+  editingAssignmentId.value = assignmentDetail?.assignmentId || '';
+  resetReleaseForm(assignmentDetail);
+  releasePublishTimeReadonly.value = releaseImmediate.value;
+  displayReleaseAssignment.value = true;
+  activeTeacherAssignmentMenu.value = '';
+};
+
+const toggleTeacherAssignmentMenu = (assignmentId) => {
+  activeTeacherAssignmentMenu.value = activeTeacherAssignmentMenu.value === assignmentId ? '' : assignmentId;
+};
+
+const handleDeleteCourseAssignment = (assignmentDetail) => {
+  if (!assignmentDetail?.assignmentId || !currentCourseId.value) return;
+  if (!window.confirm(`确认删除“${assignmentDetail.title || '该作业'}”吗？`)) return;
+  activeTeacherAssignmentMenu.value = '';
+  axios.post(`${API_BASE}/delete-course-assignment`, {
+    id: currentCourseId.value,
+    assignmentId: assignmentDetail.assignmentId
+  }).then(async (response) => {
+    const data = response.data;
+    if (data.success) {
+      if (currentAssignmentDetail.value?.assignmentId === assignmentDetail.assignmentId) {
+        showTeacherAssignment.value = false;
+        currentAssignmentDetail.value = null;
+        teacherSubmissionDetails.value = [];
+      }
+      await fetchLatestAssignments();
+      ElMessage.success(data.message || '作业删除成功');
+      return;
+    }
+    ElMessage.error(data.message || '作业删除失败');
+  }).catch((error) => {
+    console.log('删除作业失败：', error);
+    ElMessage.error('删除作业失败，请稍后重试');
+  });
+};
+
 // 修改 CoursePage.vue 中 confirmReleaseAssignment 方法
 const confirmReleaseAssignment = async () => {
   try {
     // 1. 增加参数校验
-    if (!releaseTitle.value || !releaseDeadline.value || !releaseType.value || !releaseDetail.value || !releaseScore.value) {
-      errorMessage.value = "请填写完整作业信息";
+    if (!releaseTitle.value) {
+      errorMessage.value = "请填写作业主题";
       ElMessage.error(errorMessage.value);
       return;
     }
 
-    // 2. 确保总分是数字类型
-    const totalScore = parseInt(releaseScore.value, 10);
+    // 当需要立即发布时，进行严格的参数校验
+    if (releaseImmediate.value || releaseEditMode.value) {
+      if (!releaseDeadline.value || !releaseType.value || !releaseDetail.value || !releaseScore.value) {
+        errorMessage.value = "请填写完整的作业信息（包含内容、截止日期和总分）";
+        ElMessage.error(errorMessage.value);
+        return;
+      }
+    }
+
+    // 2. 确保总分是数字类型，未填时默认为100分（避免草稿状态下后端报错）
+    const totalScoreStr = releaseScore.value || '100';
+    const totalScore = parseInt(totalScoreStr, 10);
     if (isNaN(totalScore) || totalScore <= 0) {
       errorMessage.value = "总分必须是有效的正数";
       ElMessage.error(errorMessage.value);
@@ -658,13 +1167,50 @@ const confirmReleaseAssignment = async () => {
       return;
     }
 
+    if (releaseEditMode.value && editingAssignmentId.value) {
+      const response = await axios.post(`${API_BASE}/update-course-assignment`, {
+        id: currentCourseId.value,
+        assignmentId: editingAssignmentId.value,
+        assignment: {
+          title: releaseTitle.value,
+          deadline: releaseDeadline.value,
+          assignmentType: releaseType.value,
+          content: releaseDetail.value,
+          totalScore,
+          aiEnabled: releaseAiEnabled.value
+        }
+      });
+      const data = response.data;
+      if (!data.success) {
+        errorMessage.value = data.message || '作业更新失败';
+        ElMessage.error(errorMessage.value);
+        return;
+      }
+      await fetchLatestAssignments();
+      displayReleaseAssignment.value = false;
+      releaseEditMode.value = false;
+      editingAssignmentId.value = '';
+      ElMessage.success(data.message || '作业更新成功');
+      return;
+    }
+
     const assignment = {
       title: releaseTitle.value,
       deadline: releaseDeadline.value,
       assignmentType: releaseType.value,
       content: releaseDetail.value,
       totalScore: totalScore,  // 使用转换后的数字类型
-      aiEnabled: releaseAiEnabled.value
+      aiEnabled: releaseAiEnabled.value,
+      tag: releaseTag.value,
+      knowledgeAgreement: releaseKnowledgeAgreement.value,
+      environment: releaseEnvironment.value,
+      chapter: releaseChapter.value,
+      allowFormat: releaseAllowFormat.value,
+      lateForbidden: releaseLateForbidden.value,
+      duplicateCheck: releaseDuplicateCheck.value,
+      duplicateThreshold: releaseDuplicateThreshold.value,
+      autoReturn: releaseAutoReturn.value,
+      publishTime: releaseImmediate.value ? releasePublishTime.value : ''
     };
 
     const response = await axios.post("http://localhost:8080/release-assignment", {
@@ -677,17 +1223,11 @@ const confirmReleaseAssignment = async () => {
     if (data.success) {
       successMessage.value = data.message;
       ElMessage.success(successMessage.value);
+      await fetchLatestAssignments();
       // 重置表单
-      releaseTitle.value = '';
-      releaseDeadline.value = '';
-      releaseType.value = '';
-      releaseDetail.value = '';
-      releaseScore.value = '';
-      releaseAiEnabled.value = false;
+      resetReleaseForm();
       displayReleaseAssignment.value = false;
     } else {
-      //发布成功后立即刷新作业列表
-      await fetchLatestAssignments();
       errorMessage.value = data.message;
       ElMessage.error(errorMessage.value);
     }
@@ -707,9 +1247,11 @@ const confirmReleaseAssignment = async () => {
     ElMessage.error(errorMessage.value);
   }
 };
-const displayReleaseAssignment=ref(false);
 function fromReleaseBack(){
- displayReleaseAssignment.value=false;
+  displayReleaseAssignment.value=false;
+  releaseEditMode.value = false;
+  editingAssignmentId.value = '';
+  activeTeacherAssignmentMenu.value = '';
 }
 
 const API_BASE = 'http://localhost:8080';
@@ -1207,17 +1749,22 @@ async function deleteLink(linkItem) {
 </script>
 
 <template>
-  <div class="header">
+  <div class="header" :class="{ 'header-course-mode': showCourseDetails }">
     <div class="head-left">
       <img src="@/assets/logo_blue.png">
       <!-- 根据页面状态动态显示面包屑 -->
       <template v-if="showCourseDetails">
-        <span class="breadcrumb" @click="goToCourse">我的课堂</span>
-        <span class="breadcrumb-separator"><el-icon><ArrowRight /></el-icon></span>
-        <span class="breadcrumb-current">课程内容</span>
+        <span class="course-breadcrumb-link" @click="goToCourse">我的课堂</span>
+        <span class="course-breadcrumb-separator"><el-icon><ArrowRight /></el-icon></span>
+        <span v-if="assignmentOverlayActive || currentHeaderThirdCrumb" class="course-breadcrumb-link" @click="backToCourseContent">课程内容</span>
+        <span v-else class="course-breadcrumb-current">课程内容</span>
+        <template v-if="assignmentOverlayActive || currentHeaderThirdCrumb">
+          <span class="course-breadcrumb-separator"><el-icon><ArrowRight /></el-icon></span>
+          <span class="course-breadcrumb-current">{{ currentHeaderThirdCrumb }}</span>
+        </template>
       </template>
       <template v-else>
-        <span class="breadcrumb-current">我的课堂</span>
+        <span class="top-nav-current">我的课堂</span>
       </template>
     </div>
     <div class="head-right">
@@ -1359,7 +1906,7 @@ async function deleteLink(linkItem) {
 
   </div>
   <div class="course-details" v-if="showCourseDetails">
-    <div class="course-details-header">
+    <div class="course-details-header" v-if="!assignmentOverlayActive">
       <div class="course-details-header-title">
        <div>{{course.id}}</div>
         <div>{{course.name}}</div>
@@ -1372,13 +1919,13 @@ async function deleteLink(linkItem) {
         <button class="knowledge-graph" @click="handleClickKnowledgeGraph" :class="{'active':knowledgeGraph}">知识图谱</button>
       </div>
     </div>
-    <div class="course-details-blank" v-if="learningAnalysis||gradeManagement||courseIntroduction||knowledgeGraph">
+    <div class="course-details-blank" v-if="!assignmentOverlayActive && (learningAnalysis||gradeManagement||courseIntroduction||knowledgeGraph)">
       <img src="@/assets/课堂派课程详情空白页.png" alt="课堂派课程详情空白页">
       <span>这里是一片荒地</span>
     </div>
     <div>
       <div class="course-learning-container" v-if="courseLearning">
-        <div class="course-learning-header" >
+        <div class="course-learning-header" v-if="!assignmentOverlayActive">
           <button class="" @click="handleClickContent" :class="{'active':content}">目录</button>
           <button class="" @click="handleClickInteractiveCourseware" :class="{'active':interactiveCourseware}">互动课件</button>
           <button class="" @click="handleClickHomework" :class="{'active':homework}">作业</button>
@@ -1389,7 +1936,7 @@ async function deleteLink(linkItem) {
           <button class="" @click="handleClickTopic" :class="{'active':topic}">话题</button>
           <button class="" @click="handleClickInteractiveAnswer" :class="{'active':interactiveAnswer}">互动答题</button>
         </div>
-        <div class="course-details-blank" v-if="content||interactiveCourseware||test||tencentConference||givePublicNotice||interactiveAnswer">
+        <div class="course-details-blank" v-if="!assignmentOverlayActive && (content||interactiveCourseware||test||tencentConference||givePublicNotice||interactiveAnswer)">
           <img src="@/assets/课堂派课程详情空白页.png" alt="课堂派课程详情空白页">
           <span>这里是一片荒地</span>
         </div>
@@ -1401,70 +1948,85 @@ async function deleteLink(linkItem) {
         </div>
         <div class="course-learning-body" v-if="homework">
           <CourseAssignments
-            :course-id="course.id || currentCourseId"
-            :is-teacher-view="iTeach"
-            :is-student-view="iLearn"
+            :mode="courseAssignmentsMode"
+            :i-teach="iTeach"
+            :i-learn="iLearn"
+            :valid-assignment-details="validAssignmentDetails"
+            :student-visible-assignment-details="studentVisibleAssignmentDetails"
+            :filtered-teacher-assignments="filteredTeacherAssignments"
+            v-model:teacher-homework-filter="teacherHomeworkFilter"
+            :show-teacher-assignment="showTeacherAssignment"
+            :show-learn-assignment="showLearnAssignment"
+            :current-assignment-detail="currentAssignmentDetail"
+            v-model:teacher-assignment-tab="teacherAssignmentTab"
+            v-model:teacher-comment-draft="teacherCommentDraft"
+            v-model:teacher-comment-real-name="teacherCommentRealName"
+            v-model:teacher-comment-attachment-only="teacherCommentAttachmentOnly"
+            v-model:teacher-review-filter="teacherReviewFilter"
+            v-model:teacher-review-keyword="teacherReviewKeyword"
+            :teacher-submission-stats="teacherSubmissionStats"
+            :filtered-teacher-submission-details="filteredTeacherSubmissionDetails"
+            :score-drafts="scoreDrafts"
+            v-model:learn-assignment-tab="learnAssignmentTab"
+            :learn-assignment-detail="learnAssignmentDetail"
+            :student-submit-has-submitted="studentSubmitHasSubmitted"
+            :student-submit-editing="studentSubmitEditing"
+            :selected-submission-file="selectedSubmissionFile"
+            v-model:submit-content="submitContent"
+            :active-teacher-assignment-menu="activeTeacherAssignmentMenu"
+            :display-release-assignment="displayReleaseAssignment"
+            :release-edit-mode="releaseEditMode"
+            v-model:release-title="releaseTitle"
+            v-model:release-type="releaseType"
+            v-model:release-detail="releaseDetail"
+            v-model:release-tag="releaseTag"
+            v-model:release-knowledge-agreement="releaseKnowledgeAgreement"
+            v-model:release-environment="releaseEnvironment"
+            v-model:release-chapter="releaseChapter"
+            :show-release-switch="showReleaseSwitch"
+            :show-release-publish-settings="showReleasePublishSettings"
+            v-model:release-immediate="releaseImmediate"
+            v-model:release-publish-time="releasePublishTime"
+            :release-publish-time-readonly="releasePublishTimeReadonly"
+            v-model:release-deadline="releaseDeadline"
+            v-model:release-allow-format="releaseAllowFormat"
+            v-model:release-score="releaseScore"
+            v-model:release-late-forbidden="releaseLateForbidden"
+            v-model:release-duplicate-check="releaseDuplicateCheck"
+            v-model:release-duplicate-threshold="releaseDuplicateThreshold"
+            v-model:release-auto-return="releaseAutoReturn"
+            v-model:release-ai-enabled="releaseAiEnabled"
+            :release-submit-button-text="releaseSubmitButtonText"
+            :get-teacher-assignment-stage-text="getTeacherAssignmentStageText"
+            :is-assignment-published="isAssignmentPublished"
+            :format-teacher-deadline-short="formatTeacherDeadlineShort"
+            :get-teacher-assignment-stats="getTeacherAssignmentStats"
+            :handle-view-learn-assignment-detail="handleViewLearnAssignmentDetail"
+            :handle-assignment-submit="handleAssignmentSubmit"
+            :open-teacher-assignment-detail="openTeacherAssignmentDetail"
+            :open-publish-assignment-dialog="openPublishAssignmentDialog"
+            :open-create-assignment-dialog="openCreateAssignmentDialog"
+            :toggle-teacher-assignment-menu="toggleTeacherAssignmentMenu"
+            :open-edit-assignment-dialog="openEditAssignmentDialog"
+            :handle-delete-course-assignment="handleDeleteCourseAssignment"
+            :from-teach-back="fromTeachBack"
+            :from-learn-back="fromLearnBack"
+            :get-teacher-ai-review-enabled="getTeacherAiReviewEnabled"
+            :handle-teacher-ai-review-toggle="handleTeacherAiReviewToggle"
+            :download-teacher-submission-file="downloadTeacherSubmissionFile"
+            :get-draft-score="getDraftScore"
+            :is-score-saving="isScoreSaving"
+            :handle-score-blur="handleScoreBlur"
+            :start-resubmit="startResubmit"
+            :handle-delete-submitted-file="handleDeleteSubmittedFile"
+            :handle-confirm-submit="handleConfirmSubmit"
+            :download-submitted-file="downloadSubmittedFile"
+            :confirm-release-assignment="confirmReleaseAssignment"
+            :from-release-back="fromReleaseBack"
+            @submission-file-change="handleSubmissionFileChange"
           />
         </div>
       </div>
-    </div>
-  </div>
-  <div class="teach-assignment" v-if="iTeach&&showTeacherAssignment">
-    <button @click="fromTeachBack">◀返回</button>
-    <div class="assignment-details">
-      <div class="title">作业题目：{{ currentAssignmentDetail.title }}</div>
-      <div class="assignment-description">作业详情：{{ currentAssignmentDetail.content }}</div>
-      <div>----------------------</div>
-    </div>
-
-    <div class="assignment-submit-account" v-for="assignmentDetail in assignmentDetails.filter(c=>c)" :key="assignmentDetail.assignmentId"  >
-      <!-- 提交内容展示区域 - 添加空值判断 -->
-      <div class="assignment-submit-content"  v-if="userStore.assignmentSubmit && userStore.assignmentSubmit.submitContent">
-        学生：{{assignmentDetail.accountId}}
-      </div>
-      <div>
-        提交的内容：{{ assignmentDetail.submitContent }}
-      </div>
-      <div class="assignment-grade" v-if="assignmentDetail.correct==='已批改'">
-        成绩：{{ assignmentDetail.score }}
-      </div>
-      <div class="ai-comment" v-if="assignmentDetail.aiComment">
-        <div>AI评分：{{ assignmentDetail.aiScore }}</div>
-        <div>AI评语：{{ assignmentDetail.aiComment }}</div>
-      </div>
-      <div v-if="!assignmentDetail.correct ||assignmentDetail.correct==='未批改'">
-        <input placeholder="请输入分值" v-model="score">
-        <button @click="handleConfirmCorrect(assignmentDetail)">确认批改</button>
-      </div>
-      <div>---------------------</div>
-    </div>
-    <!-- 成绩展示区域 - 添加空值判断 -->
-  </div>
-  <div class="learn-assignment" v-if="iLearn&&showLearnAssignment">
-    <button @click="fromLearnBack">◀返回</button>
-    <div class="assignment-details" >
-      <div class="title">{{LearnAssignmentDetail.title}}</div>
-      <div class="assignment-description">{{LearnAssignmentDetail.content}}</div>
-    </div>
-    <div class="assignment-submit" v-if="!LearnAssignmentDetail.submit || LearnAssignmentDetail.submit==='未提交'"  >
-      <input placeholder="请输入完成的作业" v-model="submitContent">
-      <button class="confirm-assignment-submit" @click="handleConfirmSubmit">确认提交</button>
-    </div>
-    <!-- 成绩展示区域 - 添加空值判断 -->
-    <div class="assignment-grade" v-if="LearnAssignmentDetail.correct==='已批改'">
-      成绩：{{ LearnAssignmentDetail.score }}
-    </div>
-    <div class="ai-comment" v-if="LearnAssignmentDetail.aiComment">
-      <div>AI评分：{{ LearnAssignmentDetail.aiScore }}</div>
-      <div>AI评语：{{ LearnAssignmentDetail.aiComment }}</div>
-    </div>
-    <div v-if="LearnAssignmentDetail.submit==='已提交'">已提交</div>
-    <div v-else>未提交</div>
-    <div v-if="LearnAssignmentDetail.correct==='已批改'">已批改</div>
-    <div v-else>未批改</div>
-    <!-- 提交内容展示区域 - 添加空值判断 -->
-    <div class="assignment-submit-content" v-if="LearnAssignmentDetail.submitContent">
-      提交的内容：{{LearnAssignmentDetail.submitContent }}
     </div>
   </div>
   <el-dialog v-model="joinDialogVisible" draggable :close-on-click-modal="false" :append-to-body="false" :show-close="false">
@@ -1525,16 +2087,6 @@ async function deleteLink(linkItem) {
         </span>
     </template>
   </el-dialog>
-  <div class="release-assignment" v-if="displayReleaseAssignment">
-    <button @click="fromReleaseBack" >◀返回</button>
-    <input v-model="releaseTitle" placeholder="标题">
-    <input v-model="releaseDeadline" placeholder="提交截至时间">
-    <input v-model="releaseType" placeholder="作业类型">
-    <input v-model="releaseDetail" placeholder="作业详情">
-    <input v-model="releaseScore" placeholder="总分">
-    <label class="ai-switch"><input type="checkbox" v-model="releaseAiEnabled"> 开启AI评价</label>
-    <button class="confirm-release-assignment" @click="confirmReleaseAssignment">确认发布作业</button>
-  </div>
 <!-- 归档菜单弹窗 -->
 <teleport to="body">
   <div v-if="showArchiveMenu" 
@@ -1583,38 +2135,43 @@ async function deleteLink(linkItem) {
 </el-dialog>
 </template>
 <style>
-.breadcrumb {
-  cursor: pointer;
-  color: #333;
+.top-nav-current {
+  color: #4285F4;
   font-size: 16px;
+  line-height: 65px;
+  border-bottom: none;
+  padding: 0 5px;
 }
-.breadcrumb:hover {
+
+.course-breadcrumb-link {
+  cursor: pointer;
+  color: #606266;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 65px;
+  padding: 0 2px;
+  transition: color 0.2s ease;
+}
+
+.course-breadcrumb-link:hover {
   color: #4285f4;
 }
-.breadcrumb-separator {
-  margin: 0 8px;
+
+.course-breadcrumb-separator {
+  margin: 0 4px;
   color: #c0c4cc;
   display: flex;
   align-items: center;
+  font-size: 12px;
+  line-height: 65px;
+}
+
+.course-breadcrumb-current {
+  color: #303133;
   font-size: 14px;
-}
-.breadcrumb-current {
-  color: #333;
-  font-size: 16px;
-}
-.release-assignment{
-  position: absolute;
-  display: flex;
-  flex-direction: column;
-  width: 600px;
-  top: 100px;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 20px;
-  background: white;
-  border-radius: 8px;
-  box-shadow: 0 2px 4px 0 rgba(0, 0, 0, .1);
-  z-index: 100;
+  font-weight: 400;
+  line-height: 65px;
+  padding: 0 2px;
 }
 .submit-button{
   border:none;
@@ -2107,16 +2664,6 @@ body, html {
   display: block;
 }
 
-.header span {
-  font-size: 16px;
-}
-
-.head-left span {
-  color: #4285F4;
-  border-bottom: 3px solid #4285f4;
-  padding: 19px 5px;
-}
-
 .head-left img {
   width: auto;
   height: 28px;
@@ -2141,11 +2688,20 @@ body, html {
 .head-left {
   display: flex;
   align-items: center;
+  gap: 0;
 }
 
 .head-right {
   display: flex;
   align-items: center;
+}
+
+.head-right > span {
+  font-size: 14px;
+}
+
+.header-course-mode .head-left img {
+  margin-right: 12px;
 }
 
 .head-right img {

@@ -26,6 +26,8 @@ declare namespace API {
     accountId?: string;
     id?: string;
     assignmentId?: string;
+    studentName?: string;
+    studentId?: string;
     title?: string;
     deadline?: string;
     assignmentType?: string;
@@ -38,6 +40,14 @@ declare namespace API {
     aiEnabled?: boolean;
     aiScore?: number;
     aiComment?: string;
+    correctedCount?: number;
+    pendingCount?: number;
+    missingCount?: number;
+    fileName?: string;
+    fileStoredName?: string;
+    fileSize?: number;
+    fileContentType?: string;
+    fileDownloadUrl?: string;
   };
 
   type Course = {
@@ -56,6 +66,7 @@ declare namespace API {
     id?: string;
     assignmentId?: string;
     submitContent?: string;
+    removeFile?: boolean;
     score?: number;
     assignment?: Assignment;
   };

@@ -31,7 +31,7 @@ export const useUserStore=defineStore('user',{
         },
         setAssignmentDetails(assignmentDetails){
             this.assignmentDetails=assignmentDetails;
-            localStorage.setItem('courseDetails',JSON.stringify(assignmentDetails));
+            localStorage.setItem('assignmentDetails',JSON.stringify(assignmentDetails));
         },
         setCourse(course){
             this.course=course;
@@ -65,7 +65,6 @@ export const useUserStore=defineStore('user',{
         }
     }
 })
-
 
 
 
