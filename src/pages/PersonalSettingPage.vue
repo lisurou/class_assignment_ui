@@ -228,9 +228,9 @@ function goToPersonalSetting() {
   <div class="header">
     <div class="head-left">
       <img src="@/assets/logo_blue.png">
-      <span class="breadcrumb" @click="goToCourse">我的课堂</span>
-      <span class="breadcrumb-separator"><el-icon><ArrowRight /></el-icon></span>
-      <span class="breadcrumb-current">用户设置</span>
+      <span class="course-breadcrumb-link" @click="goToCourse">我的课堂</span>
+      <span class="course-breadcrumb-separator"><el-icon><ArrowRight /></el-icon></span>
+      <span class="course-breadcrumb-current">个人设置</span>
     </div>
     <div class="head-right">
       <span>Ai工具集</span>
@@ -593,24 +593,35 @@ function goToPersonalSetting() {
 </template>
 
 <style scoped>
-.breadcrumb {
+.course-breadcrumb-link {
   cursor: pointer;
-  color: #333;
-  font-size: 16px;
+  color: #606266;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 65px;
+  padding: 0 2px;
+  transition: color 0.2s ease;
 }
-.breadcrumb:hover {
+
+.course-breadcrumb-link:hover {
   color: #4285f4;
 }
-.breadcrumb-separator {
-  margin: 0 8px;
+
+.course-breadcrumb-separator {
+  margin: 0 4px;
   color: #c0c4cc;
   display: flex;
   align-items: center;
-  font-size: 14px;
+  font-size: 12px;
+  line-height: 65px;
 }
-.breadcrumb-current {
-  color: #333;
-  font-size: 16px;
+
+.course-breadcrumb-current {
+  color: #303133;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 65px;
+  padding: 0 2px;
 }
 
 .dropdown {
@@ -673,16 +684,6 @@ function goToPersonalSetting() {
   font-size: 14px;
 }
 
-.header span {
-  font-size: 16px;
-}
-
-.head-left span {
-  color: #4285F4;
-  border-bottom: 3px solid #4285f4;
-  padding: 19px 5px;
-}
-
 .head-left {
   display: flex;
   align-items: center;
@@ -725,6 +726,7 @@ function goToPersonalSetting() {
 
 .head-right span {
   cursor: pointer;
+  font-size: 16px;
 }
 
 .personal-setting {
