@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useUserStore } from '@/stores/userStore';
 
@@ -35,69 +35,20 @@ const features = ref([
 
 const goToLogin = () => router.push('/login');
 const goToRegister = () => router.push('/register');
-const goToCourse = () => router.push('/course');
-const HOME_BASE_WIDTH = 1440;
-const TARGET_DPI_SCALE = 1.5;
-const SAFE_HORIZONTAL_GUTTER = 48;
-const homeScale = ref(1);
-const homeContentRef = ref(null);
-const homeShellHeight = ref(0);
-let homeResizeObserver = null;
-
-async function updateHomeScale() {
-  if (typeof window === 'undefined') return;
-  await nextTick();
-  const currentDpr = window.devicePixelRatio || 1;
-  const dpiScale = TARGET_DPI_SCALE / currentDpr;
-  const viewportWidth = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
-  const safeViewportWidth = Math.max(viewportWidth - SAFE_HORIZONTAL_GUTTER * 2, 320);
-  const widthScale = safeViewportWidth / HOME_BASE_WIDTH;
-  const nextScale = Math.min(dpiScale, widthScale);
-  homeScale.value = Number.isFinite(nextScale) && nextScale > 0 ? nextScale : 1;
-  const contentHeight = homeContentRef.value?.offsetHeight || 0;
-  homeShellHeight.value = contentHeight * homeScale.value;
-}
-
-const homeShellStyle = computed(() => ({
-  minHeight: `${Math.max(homeShellHeight.value, window.innerHeight || 0)}px`
-}));
-
-const homeFrameStyle = computed(() => ({
-  width: `${HOME_BASE_WIDTH * homeScale.value}px`,
-  height: `${homeShellHeight.value}px`
-}));
-
-const homeRootStyle = computed(() => ({
-  width: `${HOME_BASE_WIDTH}px`,
-  transform: `scale(${homeScale.value})`
-}));
+const mobileMenuOpen = ref(false);
+const toggleMobileMenu = () => { mobileMenuOpen.value = !mobileMenuOpen.value; };
 
 onMounted(() => {
-  updateHomeScale();
-  window.addEventListener('resize', updateHomeScale);
-  if (typeof ResizeObserver !== 'undefined' && homeContentRef.value) {
-    homeResizeObserver = new ResizeObserver(() => {
-      updateHomeScale();
-    });
-    homeResizeObserver.observe(homeContentRef.value);
-  }
   const savedPhone = localStorage.getItem('autoLoginPhone');
   const savedPassword = localStorage.getItem('autoLoginPassword');
   if (userStore.account || (savedPhone && savedPassword)) {
-    goToCourse();
+    router.push('/course');
   }
-});
-
-onBeforeUnmount(() => {
-  window.removeEventListener('resize', updateHomeScale);
-  homeResizeObserver?.disconnect();
 });
 </script>
 
 <template>
-  <div id="app" class="home-page-shell" :style="homeShellStyle">
-    <div class="home-page-frame" :style="homeFrameStyle">
-    <div ref="homeContentRef" class="home-page-root" :style="homeRootStyle">
+  <div class="home-page">
     <!-- 导航栏 -->
     <header class="navbar">
       <div class="nav-inner">
@@ -107,7 +58,7 @@ onBeforeUnmount(() => {
           </svg>
           Ai课堂派
         </div>
-        <nav>
+        <nav :class="{ 'mobile-open': mobileMenuOpen }">
           <a href="#">首页</a>
           <a href="#">产品矩阵</a>
           <a href="#">解决方案</a>
@@ -117,6 +68,11 @@ onBeforeUnmount(() => {
           <a href="#">Ai工作集</a>
         </nav>
         <div class="actions">
+          <button class="mobile-menu-btn" @click="toggleMobileMenu" aria-label="菜单">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 12h18M3 6h18M3 18h18" />
+            </svg>
+          </button>
           <button class="login-btn" @click="goToLogin">登录</button>
           <button class="register-btn" @click="goToRegister">注册</button>
         </div>
@@ -148,7 +104,7 @@ onBeforeUnmount(() => {
       <div class="products-inner">
         <div class="section-title">
           <h2>全场景智慧教学产品矩阵</h2>
-          <p>围绕“教学 · 教研 · AI · 知识 · 门户”构建可组合的数字化能力栈</p>
+          <p>围绕"教学 · 教研 · AI · 知识 · 门户"构建可组合的数字化能力栈</p>
         </div>
         <div class="grid">
           <div class="product-card" v-for="p in products" :key="p.name">
@@ -186,8 +142,6 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </footer>
-    </div>
-    </div>
   </div>
 </template>
 
@@ -197,37 +151,15 @@ onBeforeUnmount(() => {
   padding: 0;
   box-sizing: border-box;
 }
-html, body, #app {
+
+.home-page {
   width: 100%;
   min-height: 100vh;
-  margin: 0;
-  padding: 0;
-}
-.home-page-shell {
-  width: 100%;
-  min-height: 100vh;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  overflow: visible;
-}
-.home-page-frame {
-  position: relative;
-  flex: 0 0 auto;
-}
-.home-page-root {
-  position: absolute;
-  top: 0;
-  left: 0;
-  flex: 0 0 auto;
-  transform-origin: top left;
-  will-change: transform;
-}
-body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   background: #f5f8fc;
   color: #1a2332;
 }
+
 a {
   text-decoration: none;
   color: inherit;
@@ -245,6 +177,9 @@ a {
   height: 50px;
   display: flex;
   align-items: center;
+  position: sticky;
+  top: 0;
+  z-index: 50;
 }
 .nav-inner {
   display: flex;
@@ -514,9 +449,38 @@ nav a:hover {
   color: #ffffff;
 }
 
+.mobile-menu-btn {
+  display: none;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 6px;
+}
+.mobile-menu-btn svg {
+  width: 24px;
+  height: 24px;
+  color: #334155;
+}
+
 @media (max-width: 768px) {
+  .mobile-menu-btn {
+    display: block;
+  }
   nav {
     display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: #ffffff;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    flex-direction: column;
+    padding: 16px;
+    gap: 12px;
+    z-index: 100;
+  }
+  nav.mobile-open {
+    display: flex;
   }
   .hero h1 {
     font-size: 32px;

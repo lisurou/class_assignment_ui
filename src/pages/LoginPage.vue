@@ -220,23 +220,37 @@ body,html{
   left:60px;
 }
 .left{
-  width:600px;
-  height:538px;
-  overflow: hidden;
+  flex:1;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  overflow:hidden;
+  min-width:0;
+}
+.left img{
+  width:100%;
+  height:auto;
+  object-fit:contain;
 }
 .view-login {
   font-size:14px;
   display:flex;
-  width:100%;
-  height:100%;
+  align-items:center;
+  justify-content:center;
+  width:85%;
+  max-width:1200px;
+  min-height:500px;
+  margin:100px auto 0;
+  padding:40px 60px;
+  background:transparent;
+  border-radius:16px;
+  box-sizing:border-box;
 }
 .right{
-  float:right;
-  width:431px;
-  height:477px;
+  flex: 0 0 431px;
   background:rgb(255, 255, 255);
   padding:0 35px;
-  box-shadow:0 0 61px 0 rgba(85, 108, 144, .07);
+  border-radius:8px;
 }
 h1{
   text-align:center;
@@ -268,6 +282,7 @@ h1{
 .input-wrapper {
   position: relative;
   margin-top: 10px;
+  padding-bottom: 20px;
 }
 
 .input-wrapper input {
@@ -278,7 +293,7 @@ h1{
   color: #f56c6c;
   font-size: 12px;
   position: absolute;
-  bottom: -16px;
+  bottom: 0;
   left: 2px;
 }
 
@@ -301,6 +316,7 @@ input::placeholder{
 .register-div{
   display:flex;
   justify-content:flex-end;
+  align-items:center;
   margin:24px 0 0;
 }
 .register-button{
@@ -383,6 +399,7 @@ input{
 .register-div{
   display:flex;
   justify-content:flex-end;
+  align-items:center;
   margin:24px 0 0;
 }
 .register-label{
