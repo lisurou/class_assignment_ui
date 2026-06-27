@@ -1,10 +1,9 @@
 <script setup>
 //路由实例
 import {useRouter} from "vue-router";
-import {ref, watch, onMounted, onUnmounted, computed} from 'vue';
+import { computed, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue';
 import {useUserStore} from '@/stores/userStore';
-import {  ElDialog,ElButton, ElMessage, ElIcon } from 'element-plus';
-import { ArrowRight } from '@element-plus/icons-vue';
+import { ElDialog, ElButton, ElMessage } from 'element-plus';
 import axios from 'axios';
 import CourseMaterials from '@/components/CourseMaterials.vue';
 import CourseAssignments from '@/components/CourseAssignments.vue';
@@ -14,7 +13,19 @@ const router = useRouter()
 const isSearchFocused = ref(false);
 let isFold=ref(true);
 const userStore = useUserStore();
+const topMenus = [
+  { key: 'course', label: '我的课堂' },
+  { key: 'prep', label: '备课区', teacherOnly: true },
+  { key: 'lab', label: '虚拟教研室' },
+  { key: 'agent', label: 'π 智能体（AI）' },
+  { key: 'analysis', label: 'AI学情分析' },
+  { key: 'graph', label: '知识图谱' },
+  { key: 'knowledge', label: '多模态知识库' }
+];
 const identity=computed(()=>userStore.account?.identity||"学生");
+const displayName = computed(() => userStore.account?.name || '教师用户');
+const userMenuOpen = ref(false);
+const userMenuRef = ref(null);
 const joinDialogVisible=ref(false);
 const createDialogVisible=ref(false);
 const taughtCourses = computed(() => userStore.taught || []);
@@ -331,6 +342,40 @@ const goToLogin = () => {
 function goToPersonalSetting() {
   router.push('/personal-setting')
 }
+function goToLessonPrep() {
+  router.push('/lesson-prep')
+}
+function handleTopMenuClick(menuKey) {
+  if (menuKey === 'course') {
+    goToCourse();
+    return;
+  }
+
+  if (menuKey === 'prep' && userStore.account?.identity === '老师') {
+    goToLessonPrep();
+  }
+}
+function toggleUserMenu() {
+  userMenuOpen.value = !userMenuOpen.value;
+}
+function closeUserMenu() {
+  userMenuOpen.value = false;
+}
+function handleDocumentClick(event) {
+  if (!userMenuRef.value?.contains(event.target)) {
+    closeUserMenu();
+  }
+}
+function handleUserMenuAction(action) {
+  closeUserMenu();
+  action?.();
+}
+onMounted(() => {
+  document.addEventListener('click', handleDocumentClick);
+});
+onBeforeUnmount(() => {
+  document.removeEventListener('click', handleDocumentClick);
+});
 function goToCourse(){
   // 清除所有子页面状态，返回到主列表
   showCourseDetails.value = false;
@@ -1749,43 +1794,43 @@ async function deleteLink(linkItem) {
 </script>
 
 <template>
-  <div class="header" :class="{ 'header-course-mode': showCourseDetails }">
-    <div class="head-left">
-      <img src="@/assets/logo_blue.png">
-      <!-- 根据页面状态动态显示面包屑 -->
-      <template v-if="showCourseDetails">
-        <span class="course-breadcrumb-link" @click="goToCourse">我的课堂</span>
-        <span class="course-breadcrumb-separator"><el-icon><ArrowRight /></el-icon></span>
-        <span v-if="assignmentOverlayActive || currentHeaderThirdCrumb" class="course-breadcrumb-link" @click="backToCourseContent">课程内容</span>
-        <span v-else class="course-breadcrumb-current">课程内容</span>
-        <template v-if="assignmentOverlayActive || currentHeaderThirdCrumb">
-          <span class="course-breadcrumb-separator"><el-icon><ArrowRight /></el-icon></span>
-          <span class="course-breadcrumb-current">{{ currentHeaderThirdCrumb }}</span>
-        </template>
-      </template>
-      <template v-else>
-        <span class="top-nav-current">我的课堂</span>
-      </template>
-    </div>
-    <div class="head-right">
-      <span>Ai工具集</span>
-      <span>论文查重</span>
-      <span>任务管理</span>
-      <span>提醒</span>
-      <div class="dropdown">
-        <button class="dropdown=button">
-          <img alt="用户头像" src="@/assets/课堂派头像.jpg"/>
+  <header class="prep-topbar course-topbar">
+    <div class="prep-topbar__left">
+      <img class="prep-topbar__logo" src="@/assets/logo_blue.png" alt="Ai课堂派">
+      <nav class="prep-topbar__nav">
+        <button
+          v-for="item in topMenus"
+          :key="item.key"
+          v-show="!item.teacherOnly || userStore.account?.identity === '老师'"
+          type="button"
+          class="prep-topbar__nav-item"
+          :class="{ 'is-active': item.key === 'course' }"
+          @click="handleTopMenuClick(item.key)"
+        >
+          {{ item.label }}
         </button>
-        <div class="dropdown-content">
-          <button @click="goToCourse">我的课堂</button>
-          <button>开通VIP</button>
-          <button>机构用户认证</button>
-          <button @click="goToPersonalSetting">个人设置</button>
-          <button @click="goToLogin">退出登录</button>
+      </nav>
+    </div>
+
+    <div class="prep-topbar__right">
+      <button type="button" class="prep-topbar__more">⋯ 更多</button>
+      <button type="button" class="prep-topbar__bell">🔔</button>
+      <div ref="userMenuRef" class="dropdown prep-topbar__user-menu">
+        <button type="button" class="prep-topbar__user" @click.stop="toggleUserMenu">
+          <img alt="用户头像" src="@/assets/课堂派头像.jpg"/>
+          <span>{{ displayName }}</span>
+        </button>
+        <div v-show="userMenuOpen" class="dropdown-content is-open">
+          <button @click="handleUserMenuAction(goToCourse)">我的课堂</button>
+          <button v-if="userStore.account?.identity==='老师'" @click="handleUserMenuAction(goToLessonPrep)">备课区</button>
+          <button @click="closeUserMenu">开通VIP</button>
+          <button @click="closeUserMenu">机构用户认证</button>
+          <button @click="handleUserMenuAction(goToPersonalSetting)">个人设置</button>
+          <button @click="handleUserMenuAction(goToLogin)">退出登录</button>
         </div>
       </div>
     </div>
-  </div>
+  </header>
 
   <div class="body-container"  v-if="!showCourseDetails">
     <div class="top-course-container">
@@ -2089,7 +2134,7 @@ async function deleteLink(linkItem) {
   </el-dialog>
 <!-- 归档菜单弹窗 -->
 <teleport to="body">
-  <div v-if="showArchiveMenu" 
+  <div v-if="showArchiveMenu"
        class="archive-menu"
        :style="{ left: archiveMenuPosition.x + 'px', top: archiveMenuPosition.y + 'px' }"
        @click.stop>
@@ -2636,16 +2681,18 @@ body, html {
 .dropdown {
   position: relative;
   display: inline-block;
-
 }
 
 .dropdown-content {
-  display: none;
   position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
   background-color: white;
   min-width: 160px;
-  box-shadow: 0 8px 16px 0 rgba(0, 0, 0, 0.2);
-  right: 2px;
+  padding: 8px 0;
+  border-radius: 2px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  z-index: 1200;
 }
 
 .dropdown-content button {
@@ -2660,38 +2707,95 @@ body, html {
   background-color: #f1f1f1
 }
 
-.dropdown:hover .dropdown-content {
-  display: block;
-}
-
 .head-left img {
   width: auto;
   height: 28px;
   margin-right: 15px;
 }
 
-.header {
+.prep-topbar {
   width: 100%;
-  height: 65px;
-  padding: 0 24px;
+  height: 60px;
+  padding: 0 14px 0 12px;
   display: flex;
-  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
   box-shadow: 0 1px 0 0 #dfdfdf;
   background-color: #fff;
   z-index: 999;
   top: 0;
   left: 0;
   position: fixed;
-  justify-content: space-between;
 }
 
-.head-left {
+.prep-topbar__left,
+.prep-topbar__right,
+.prep-topbar__nav,
+.prep-topbar__user {
   display: flex;
   align-items: center;
   gap: 0;
 }
 
-.head-right {
+.prep-topbar__left {
+  gap: 22px;
+}
+
+.prep-topbar__logo {
+  width: auto;
+  height: 28px;
+  display: block;
+}
+
+.prep-topbar__nav {
+  gap: 6px;
+}
+
+.prep-topbar__nav-item,
+.prep-topbar__more,
+.prep-topbar__bell {
+  border: none;
+  background: transparent;
+}
+
+.prep-topbar__nav-item {
+  height: 38px;
+  padding: 0 12px;
+  color: #38455c;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.prep-topbar__nav-item.is-active {
+  color: #2f6bff;
+  font-weight: 600;
+}
+
+.prep-topbar__right {
+  gap: 10px;
+}
+
+.prep-topbar__more,
+.prep-topbar__bell {
+  color: #556175;
+  font-size: 13px;
+}
+
+.prep-topbar__user {
+  gap: 8px;
+  color: #4a556a;
+  font-size: 13px;
+}
+
+.prep-topbar__user img {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+  padding: 0;
+}
+
+.prep-topbar__user-menu {
   display: flex;
   align-items: center;
 }

@@ -10,6 +10,9 @@ import ForgotPasswordPage from "@/pages/ForgotPasswordPage.vue";
 import PersonalSettingPage from "@/pages/PersonalSettingPage.vue";
 import CoursePage from "@/pages/CoursePage.vue"
 import HomePage from "@/pages/HomePage.vue"
+import LessonPrepPage from "@/pages/LessonPrepPage.vue"
+import LessonPrepMembersPage from "@/pages/LessonPrepMembersPage.vue"
+import LessonPrepLogsPage from "@/pages/LessonPrepLogsPage.vue"
 
 import {createPinia} from 'pinia'
 import ElementPlus from 'element-plus'
@@ -42,6 +45,22 @@ const routes = [
     {
         path:'/course',
         component:CoursePage,
+    },
+    {
+        path:'/lesson-prep/:spaceId/members',
+        component:LessonPrepMembersPage,
+    },
+    {
+        path:'/lesson-prep/:spaceId/logs',
+        component:LessonPrepLogsPage,
+    },
+    {
+        path:'/lesson-prep/:spaceId',
+        component:LessonPrepPage,
+    },
+    {
+        path:'/lesson-prep',
+        component:LessonPrepPage,
     },
 ]
 //2.创建路由器
