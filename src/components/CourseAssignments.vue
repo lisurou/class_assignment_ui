@@ -567,65 +567,53 @@ const updateDraftScore = (assignmentDetail, value) => {
               <div class="student-submit-title">提交内容</div>
               <div class="student-submit-tip">支持上传附件和填写留言，确认后老师即可查看你的提交内容。</div>
             </div>
-            <button class="student-submit-confirm" @click="(studentSubmitHasSubmitted && !studentSubmitEditing) ? startResubmit() : handleConfirmSubmit()">
-              {{ studentSubmitEditing ? '确认提交' : (studentSubmitHasSubmitted ? '更新提交' : '确认提交') }}
+            <button class="student-submit-confirm" @click="handleConfirmSubmit()">
+              {{ studentSubmitHasSubmitted ? '再次提交' : '确认提交' }}
             </button>
           </div>
 
-          <template v-if="studentSubmitHasSubmitted && !studentSubmitEditing">
+          <template v-if="studentSubmitHasSubmitted">
             <div class="student-submit-section">
               <div class="student-submit-section-title">提交状态</div>
-              <div class="student-submitted-banner">已提交，等待老师批改</div>
+              <div class="student-submitted-banner">已提交，可根据 AI 批阅结果继续修改后再次提交</div>
             </div>
 
-            <div class="student-submit-section">
-              <div class="student-submit-section-title">作业附件 <span>{{ selectedSubmissionFile ? '1个' : '0个' }}</span></div>
-              <div v-if="selectedSubmissionFile" class="student-submitted-file-card">
-                <div class="student-file-icon">W</div>
-                <div class="student-file-meta">
-                  <div class="student-file-name">{{ selectedSubmissionFile.name }}</div>
-                  <div class="student-file-size">{{ selectedSubmissionFile.sizeText }}</div>
-                </div>
-                <button class="student-file-download" @click="downloadSubmittedFile">下载</button>
-                <button class="student-file-delete" @click="handleDeleteSubmittedFile">删除</button>
-              </div>
-              <div v-else class="student-submitted-empty-file">未上传附件</div>
-            </div>
-
-            <div v-if="(learnAssignmentDetail.submitContent || '').trim()" class="student-submit-section">
-              <div class="student-submit-section-title">作业留言</div>
-              <div class="student-submitted-preview">{{ learnAssignmentDetail.submitContent }}</div>
-            </div>
-
-            <div v-if="learnAssignmentDetail.correct === '已批改'" class="student-submit-section">
-              <div class="student-submit-section-title">批改结果</div>
+            <div v-if="learnAssignmentDetail.aiEnabled && (learnAssignmentDetail.aiComment || learnAssignmentDetail.aiScore !== null && learnAssignmentDetail.aiScore !== undefined)" class="student-submit-section">
+              <div class="student-submit-section-title">AI预批阅结果</div>
               <div class="student-result-box">
-                <div class="student-result-score">{{ learnAssignmentDetail.score ?? '--' }} / {{ learnAssignmentDetail.totalScore || 100 }}</div>
+                <div class="student-result-score">{{ learnAssignmentDetail.aiScore ?? '--' }} / {{ learnAssignmentDetail.totalScore || 100 }}</div>
                 <div v-if="learnAssignmentDetail.aiComment" class="student-result-comment">{{ learnAssignmentDetail.aiComment }}</div>
               </div>
             </div>
-          </template>
 
-          <template v-else>
-            <div class="student-submit-section">
-              <div class="student-submit-section-title">作业附件</div>
-              <input ref="submissionFileInput" type="file" class="student-hidden-file-input" @change="handleSubmissionFileChange">
-              <div class="student-upload-box" @click="triggerSubmissionFilePicker">
-                <div class="student-upload-icon">⇪</div>
-                <div>点击上传添加作业文件</div>
-                <small>支持各类文档、图片、代码、压缩包等格式</small>
-              </div>
-              <div v-if="selectedSubmissionFile" class="student-selected-file-tip">
-                已选择：{{ selectedSubmissionFile.name }} {{ selectedSubmissionFile.sizeText ? `(${selectedSubmissionFile.sizeText})` : '' }}
-                <button class="student-inline-link danger" @click="handleDeleteSubmittedFile">删除附件</button>
+            <div v-if="learnAssignmentDetail.correct === '已批改'" class="student-submit-section">
+              <div class="student-submit-section-title">教师批改结果</div>
+              <div class="student-result-box">
+                <div class="student-result-score">{{ learnAssignmentDetail.score ?? '--' }} / {{ learnAssignmentDetail.totalScore || 100 }}</div>
+                <div v-if="learnAssignmentDetail.teacherComment" class="student-result-comment">{{ learnAssignmentDetail.teacherComment }}</div>
               </div>
             </div>
-
-            <div class="student-submit-section">
-              <div class="student-submit-section-title">作业留言 <span>选填</span></div>
-              <textarea v-model="submitContentModel" class="student-submit-textarea" placeholder="作业说明作补充或留言使用哦！"></textarea>
-            </div>
           </template>
+
+          <div class="student-submit-section">
+            <div class="student-submit-section-title">作业附件</div>
+            <input ref="submissionFileInput" type="file" class="student-hidden-file-input" @change="handleSubmissionFileChange">
+            <div class="student-upload-box" @click="triggerSubmissionFilePicker">
+              <div class="student-upload-icon">⇪</div>
+              <div>点击上传添加作业文件</div>
+              <small>支持各类文档、图片、代码、压缩包等格式</small>
+            </div>
+            <div v-if="selectedSubmissionFile" class="student-selected-file-tip">
+              已选择：{{ selectedSubmissionFile.name }} {{ selectedSubmissionFile.sizeText ? `(${selectedSubmissionFile.sizeText})` : '' }}
+              <button v-if="studentSubmitHasSubmitted && !selectedSubmissionFile.rawFile" class="student-inline-link" @click="downloadSubmittedFile">下载附件</button>
+              <button class="student-inline-link danger" @click="handleDeleteSubmittedFile">删除附件</button>
+            </div>
+          </div>
+
+          <div class="student-submit-section">
+            <div class="student-submit-section-title">作业留言 <span>选填</span></div>
+            <textarea v-model="submitContentModel" class="student-submit-textarea" placeholder="作业说明作补充或留言使用哦！"></textarea>
+          </div>
         </div>
       </div>
     </div>

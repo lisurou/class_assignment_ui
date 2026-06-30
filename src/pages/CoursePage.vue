@@ -1384,7 +1384,7 @@ const handleViewLearnAssignmentDetail = (assignmentDetail) => {
   showLearnAssignment.value = true;
   learnAssignmentTab.value = 'detail';
   submitContent.value = assignmentDetail?.submitContent || '';
-  studentSubmitEditing.value = assignmentDetail?.submit !== '已提交';
+  studentSubmitEditing.value = true;
   selectedSubmissionFile.value = normalizeAssignmentFile(assignmentDetail);
 };
 
@@ -1603,7 +1603,7 @@ const handleConfirmSubmit=async()=>{
         ...learnAssignmentDetail.value,
         fileName: selectedSubmissionFile.value?.name || learnAssignmentDetail.value?.fileName
       }) || selectedSubmissionFile.value;
-      studentSubmitEditing.value = false;
+      studentSubmitEditing.value = true;
       learnAssignmentTab.value = 'submit';
       await fetchLatestAssignments();
       syncCurrentAssignmentFromList();
