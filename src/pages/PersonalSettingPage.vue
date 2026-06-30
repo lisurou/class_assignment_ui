@@ -3,10 +3,11 @@ import { ElMessage, ElIcon } from 'element-plus';
 import { ArrowRight } from '@element-plus/icons-vue';
 //路由实例
 import {useRouter} from "vue-router";
-import {ref} from "vue";
+import {computed, onBeforeUnmount, ref} from "vue";
 import {useUserStore} from '@/stores/userStore';
 import '@/iconfont/font_4980648_74xoiknacif/iconfont.css';
 import axios from 'axios';
+import defaultAvatarImage from '@/assets/课堂派头像.jpg';
 
 const userStore = useUserStore();
 const selectedRole = ref("学生");
@@ -26,8 +27,92 @@ let isGoToSet = ref(false);
 let isEdit = ref(false);
 let isChangePhone = ref(false);
 let isChangePassword = ref(false);
+const avatarDialogVisible = ref(false);
+const avatarFileInputRef = ref(null);
+const selectedAvatarFile = ref(null);
+const avatarPreviewUrl = ref('');
 const router = useRouter()
 const state = ref('账户设置');
+const avatarUploading = ref(false);
+
+const userAvatarSrc = computed(() => userStore.account?.avatarUrl || defaultAvatarImage);
+const dialogAvatarSrc = computed(() => avatarPreviewUrl.value || userAvatarSrc.value);
+
+const resetAvatarSelection = () => {
+  if (avatarPreviewUrl.value && avatarPreviewUrl.value.startsWith('blob:')) {
+    URL.revokeObjectURL(avatarPreviewUrl.value);
+  }
+  avatarPreviewUrl.value = '';
+  selectedAvatarFile.value = null;
+  if (avatarFileInputRef.value) {
+    avatarFileInputRef.value.value = '';
+  }
+};
+
+const openAvatarDialog = () => {
+  resetAvatarSelection();
+  avatarDialogVisible.value = true;
+};
+
+const closeAvatarDialog = () => {
+  avatarDialogVisible.value = false;
+  resetAvatarSelection();
+};
+
+const triggerAvatarUpload = () => {
+  avatarFileInputRef.value?.click();
+};
+
+const handleAvatarFileChange = (event) => {
+  const [file] = event.target.files || [];
+  if (!file) {
+    return;
+  }
+  if (!file.type.startsWith('image/')) {
+    ElMessage.error('请选择图片格式的头像文件');
+    resetAvatarSelection();
+    return;
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    ElMessage.error('头像图片大小不能超过5MB');
+    resetAvatarSelection();
+    return;
+  }
+  resetAvatarSelection();
+  selectedAvatarFile.value = file;
+  avatarPreviewUrl.value = URL.createObjectURL(file);
+};
+
+const handleSaveAvatar = async () => {
+  if (!selectedAvatarFile.value) {
+    ElMessage.warning('请先选择新的头像图片');
+    return;
+  }
+  avatarUploading.value = true;
+  try {
+    const formData = new FormData();
+    formData.append('accountId', userStore.account?.accountId || '');
+    formData.append('file', selectedAvatarFile.value);
+    const response = await axios.post('http://localhost:8080/change-avatar-form', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      }
+    });
+    const data = response.data;
+    if (data.success) {
+      userStore.setAccount(data.account);
+      ElMessage.success(data.message || '头像更新成功');
+      closeAvatarDialog();
+      return;
+    }
+    ElMessage.error(data.message || '头像更新失败');
+  } catch (error) {
+    console.error('头像上传失败', error);
+    ElMessage.error('头像上传失败，请稍后重试');
+  } finally {
+    avatarUploading.value = false;
+  }
+};
 
 function goToLogin() {
   userStore.logout(); // 调用退出登录的方法，清除信息
@@ -222,6 +307,10 @@ const handleConfirmChangePhone = async () => {
 function goToPersonalSetting() {
   router.push('/personalSettingPage');
 }
+
+onBeforeUnmount(() => {
+  resetAvatarSelection();
+});
 </script>
 
 <template>
@@ -238,8 +327,8 @@ function goToPersonalSetting() {
       <span>任务管理</span>
       <span>提醒</span>
       <div class="dropdown">
-        <button class="dropdown=button">
-          <img alt="用户头像" src="@/assets/课堂派头像.jpg"/>
+        <button class="avatar-trigger">
+          <img :src="userAvatarSrc" alt="用户头像" class="header-avatar"/>
         </button>
         <div class="dropdown-content">
           <button @click="goToCourse">我的课堂</button>
@@ -253,8 +342,12 @@ function goToPersonalSetting() {
   </div>
   <div class="personal-setting">
     <div class="head-div">
-      <div>
-        <img src="@/assets/课堂派头像.jpg">
+      <div class="profile-avatar-section">
+        <button class="profile-avatar-button" type="button" @click="openAvatarDialog">
+          <img :src="userAvatarSrc" alt="个人头像" class="profile-avatar">
+          <span class="profile-avatar-mask">更换头像</span>
+        </button>
+        <span class="profile-avatar-tip">点击头像可重新上传</span>
       </div>
       <div>
         <h6 class="name">{{ userStore.account?.name }}</h6>
@@ -590,6 +683,34 @@ function goToPersonalSetting() {
       </div>
     </div>
   </div>
+  <div v-if="avatarDialogVisible" class="avatar-dialog-mask" @click.self="closeAvatarDialog">
+    <div class="avatar-dialog">
+      <div class="avatar-dialog-header">
+        <h3>设置头像</h3>
+        <button class="avatar-dialog-close" type="button" @click="closeAvatarDialog">×</button>
+      </div>
+      <div class="avatar-dialog-body">
+        <div class="avatar-preview-wrapper">
+          <img :src="dialogAvatarSrc" alt="头像预览" class="avatar-preview-image">
+        </div>
+        <p class="avatar-dialog-tip">支持 JPG、PNG、GIF、WEBP 等图片格式，大小不超过 5MB</p>
+        <input
+          ref="avatarFileInputRef"
+          accept="image/*"
+          class="avatar-file-input"
+          type="file"
+          @change="handleAvatarFileChange"
+        >
+        <button class="avatar-upload-button" type="button" @click="triggerAvatarUpload">重新上传</button>
+      </div>
+      <div class="avatar-dialog-footer">
+        <button class="avatar-cancel-button" type="button" @click="closeAvatarDialog">取消</button>
+        <button class="avatar-save-button" type="button" :disabled="avatarUploading" @click="handleSaveAvatar">
+          {{ avatarUploading ? '保存中...' : '保存' }}
+        </button>
+      </div>
+    </div>
+  </div>
 </template>
 
 <style scoped>
@@ -627,7 +748,6 @@ function goToPersonalSetting() {
 .dropdown {
   position: relative;
   display: inline-block;
-
 }
 
 .dropdown-content {
@@ -637,6 +757,15 @@ function goToPersonalSetting() {
   min-width: 160px;
   box-shadow: 0 8px 16px 0 rgba(0, 0, 0, 0.2);
   right: 2px;
+}
+
+.avatar-trigger {
+  padding: 0;
+  border: none;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .dropdown-content button {
@@ -716,8 +845,7 @@ function goToPersonalSetting() {
 }
 
 .head-right img {
-  width: 70px;
-  padding: 16px;
+  display: block;
 }
 
 .head-right {
@@ -727,6 +855,14 @@ function goToPersonalSetting() {
 .head-right span {
   cursor: pointer;
   font-size: 16px;
+}
+
+.header-avatar {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 50%;
+  border: 1px solid #e6e8eb;
 }
 
 .personal-setting {
@@ -742,9 +878,11 @@ function goToPersonalSetting() {
   display: flex;
   flex-direction: row;
   align-items: center;
+  gap: 20px;
   width: 100%;
   margin: 0 auto;
   border-radius: 8px;
+  padding: 20px 24px;
 }
 
 button {
@@ -779,11 +917,56 @@ body, html {
 
 .name {
   font-size: 22px;
+  margin: 0 0 10px;
 }
 
-.personal-setting img {
+.profile-avatar-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.profile-avatar-button {
   width: 114px;
-  padding: 16px;
+  height: 114px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  overflow: hidden;
+  position: relative;
+  background: transparent;
+}
+
+.profile-avatar {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+  display: block;
+}
+
+.profile-avatar-mask {
+  position: absolute;
+  inset: auto 0 0;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.52);
+  color: #fff;
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.profile-avatar-button:hover .profile-avatar-mask {
+  opacity: 1;
+}
+
+.profile-avatar-tip {
+  font-size: 12px;
+  color: #909399;
 }
 
 .radio-input {
@@ -1172,5 +1355,138 @@ input:checked + .toggle-slider {
 
 input:checked + .toggle-slider::before {
   transform: translateX(27px);
+}
+
+.avatar-dialog-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.avatar-dialog {
+  width: 420px;
+  background: #fff;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.18);
+}
+
+.avatar-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 24px;
+  border-bottom: 1px solid #ebeef5;
+}
+
+.avatar-dialog-header h3 {
+  margin: 0;
+  padding: 0;
+  font-size: 18px;
+  color: #303133;
+}
+
+.avatar-dialog-close {
+  padding: 0;
+  color: #909399;
+  font-size: 30px;
+  line-height: 1;
+}
+
+.avatar-dialog-close:hover {
+  color: #4285F4;
+}
+
+.avatar-dialog-body {
+  padding: 28px 24px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.avatar-preview-wrapper {
+  width: 180px;
+  height: 180px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #f5f7fa;
+  border: 1px solid #e4e7ed;
+}
+
+.avatar-preview-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.avatar-dialog-tip {
+  margin: 18px 0 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: #909399;
+  text-align: center;
+}
+
+.avatar-file-input {
+  display: none;
+}
+
+.avatar-upload-button {
+  margin-top: 20px;
+  width: 112px;
+  height: 36px;
+  border-radius: 18px;
+  background: #edf4ff;
+  color: #4285F4;
+  font-size: 14px;
+}
+
+.avatar-upload-button:hover {
+  background: #dfeeff;
+}
+
+.avatar-dialog-footer {
+  padding: 16px 24px 24px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.avatar-cancel-button,
+.avatar-save-button {
+  min-width: 84px;
+  height: 36px;
+  border-radius: 18px;
+  font-size: 14px;
+}
+
+.avatar-cancel-button {
+  color: #606266;
+  border: 1px solid #dcdfe6;
+}
+
+.avatar-cancel-button:hover {
+  color: #4285F4;
+  border-color: #b3d1ff;
+  background: #ecf5ff;
+}
+
+.avatar-save-button {
+  color: #fff;
+  background: #4285F4;
+}
+
+.avatar-save-button:hover {
+  background: #5b97f7;
+}
+
+.avatar-save-button:disabled {
+  cursor: not-allowed;
+  background: #a0c4ff;
 }
 </style>

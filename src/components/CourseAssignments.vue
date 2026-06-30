@@ -51,6 +51,7 @@ const props = defineProps({
   releaseDuplicateThreshold: { type: [String, Number], default: '' },
   releaseAutoReturn: { type: Boolean, default: false },
   releaseAiEnabled: { type: Boolean, default: false },
+  releaseAttachmentFile: { type: Object, default: null },
   releaseSubmitButtonText: { type: String, default: '确认' },
   getTeacherAssignmentStageText: { type: Function, required: true },
   isAssignmentPublished: { type: Function, required: true },
@@ -76,6 +77,11 @@ const props = defineProps({
   handleDeleteSubmittedFile: { type: Function, required: true },
   handleConfirmSubmit: { type: Function, required: true },
   downloadSubmittedFile: { type: Function, required: true },
+  downloadAssignmentResource: { type: Function, required: true },
+  handleReleaseAttachmentChange: { type: Function, required: true },
+  removeReleaseAttachment: { type: Function, required: true },
+  handleOpenTeacherReview: { type: Function, required: true },
+  handleRemindStudent: { type: Function, required: true },
   confirmReleaseAssignment: { type: Function, required: true },
   fromReleaseBack: { type: Function, required: true },
 });
@@ -241,6 +247,7 @@ const releaseAiEnabledModel = computed({
 });
 
 const submissionFileInput = ref(null);
+const releaseAttachmentInput = ref(null);
 
 const triggerSubmissionFilePicker = () => {
   submissionFileInput.value?.click();
@@ -248,6 +255,10 @@ const triggerSubmissionFilePicker = () => {
 
 const handleSubmissionFileChange = (event) => {
   emit('submission-file-change', event);
+};
+
+const triggerReleaseAttachmentPicker = () => {
+  releaseAttachmentInput.value?.click();
 };
 
 const updateDraftScore = (assignmentDetail, value) => {
@@ -377,6 +388,12 @@ const updateDraftScore = (assignmentDetail, value) => {
             <span>{{ currentAssignmentDetail?.totalScore || 100 }}分</span>
           </div>
           <div class="teacher-assignment-summary-desc">{{ currentAssignmentDetail?.content || '暂无作业说明' }}</div>
+          <div v-if="currentAssignmentDetail?.attachmentName" class="assignment-resource-row">
+            <span class="assignment-resource-label">附件：</span>
+            <button class="teacher-op-link" @click="downloadAssignmentResource(currentAssignmentDetail)">
+              {{ currentAssignmentDetail.attachmentName }}
+            </button>
+          </div>
         </div>
 
         <div class="student-comment-card teacher-detail-comment-card">
@@ -417,6 +434,12 @@ const updateDraftScore = (assignmentDetail, value) => {
             <span>{{ currentAssignmentDetail?.totalScore || 100 }}分</span>
           </div>
           <div class="teacher-assignment-summary-desc">{{ currentAssignmentDetail?.content || '暂无作业说明' }}</div>
+          <div v-if="currentAssignmentDetail?.attachmentName" class="assignment-resource-row">
+            <span class="assignment-resource-label">附件：</span>
+            <button class="teacher-op-link" @click="downloadAssignmentResource(currentAssignmentDetail)">
+              {{ currentAssignmentDetail.attachmentName }}
+            </button>
+          </div>
         </div>
 
         <div class="teacher-review-panel">
@@ -478,8 +501,8 @@ const updateDraftScore = (assignmentDetail, value) => {
                 </template>
               </span>
               <span class="teacher-review-ops">
-                <button v-if="assignmentDetail.submit === '已提交'" class="teacher-op-link">进入批阅</button>
-                <button v-else class="teacher-op-link danger">催交</button>
+                <button v-if="assignmentDetail.submit === '已提交'" class="teacher-op-link" @click="handleOpenTeacherReview(assignmentDetail)">进入批阅</button>
+                <button v-else class="teacher-op-link danger" @click="handleRemindStudent(assignmentDetail)">催交</button>
               </span>
             </div>
 
@@ -514,6 +537,12 @@ const updateDraftScore = (assignmentDetail, value) => {
         <div class="student-detail-card">
           <div class="student-detail-title">作业内容</div>
           <div class="student-detail-text">{{ learnAssignmentDetail.content || '暂无作业内容' }}</div>
+          <div v-if="learnAssignmentDetail.attachmentName" class="assignment-resource-row student-resource-row">
+            <span class="assignment-resource-label">作业附件：</span>
+            <button class="teacher-op-link" @click="downloadAssignmentResource(learnAssignmentDetail)">
+              {{ learnAssignmentDetail.attachmentName }}
+            </button>
+          </div>
         </div>
 
         <div class="student-comment-card">
@@ -636,6 +665,14 @@ const updateDraftScore = (assignmentDetail, value) => {
           </div>
           <textarea v-model="releaseDetailModel" class="release-textarea" placeholder="请输入作业内容、说明和要求" maxlength="1000"></textarea>
           <div class="release-text-count">{{ releaseDetailModel.length }}/1000</div>
+          <div class="release-attachment-panel">
+            <input ref="releaseAttachmentInput" type="file" class="student-hidden-file-input" @change="handleReleaseAttachmentChange">
+            <button class="release-upload-btn" @click="triggerReleaseAttachmentPicker">添加附件</button>
+            <div v-if="releaseAttachmentFile" class="release-selected-file">
+              <span>{{ releaseAttachmentFile.name }}<template v-if="releaseAttachmentFile.sizeText">（{{ releaseAttachmentFile.sizeText }}）</template></span>
+              <button class="student-inline-link danger" @click="removeReleaseAttachment">删除附件</button>
+            </div>
+          </div>
         </div>
 
         <div class="release-collapse">参考答案设置</div>
@@ -1831,6 +1868,55 @@ button {
   font-size: 12px;
   color: #909399;
   margin-top: 6px;
+}
+
+.assignment-resource-row {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: #606266;
+}
+
+.assignment-resource-label {
+  color: #909399;
+}
+
+.student-resource-row {
+  margin-top: 18px;
+}
+
+.release-attachment-panel {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px dashed #dbeafe;
+  border-radius: 8px;
+  background: #f8fbff;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.release-upload-btn {
+  height: 34px;
+  padding: 0 16px;
+  border: 1px solid #bfdcff;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 13px;
+}
+
+.release-selected-file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: #374151;
 }
 
 .release-tag-row {

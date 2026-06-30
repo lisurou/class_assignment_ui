@@ -1,13 +1,16 @@
 <script setup>
 //路由实例
 import {useRouter} from "vue-router";
-import { computed, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue';
 import {useUserStore} from '@/stores/userStore';
 import { ElDialog, ElButton, ElMessage } from 'element-plus';
 import axios from 'axios';
+import mammoth from 'mammoth/mammoth.browser';
 import CourseMaterials from '@/components/CourseMaterials.vue';
 import CourseAssignments from '@/components/CourseAssignments.vue';
 import TopicPage from '@/components/TopicPage.vue';
+import defaultCourseBanner from '@/assets/课堂派课程详情图片.png';
+import courseCodeQrIcon from '@/assets/course-code-qrcode.svg';
 
 const router = useRouter()
 const isSearchFocused = ref(false);
@@ -57,6 +60,7 @@ const activeTeacherAssignmentMenu = ref('');
 const teacherSubmissionDetails = ref([]);
 const scoreDrafts = ref({});
 const savingScoreKeys = ref([]);
+const createJoinDropdownOpen = ref(false);
 const releaseEditMode = ref(false);
 const editingAssignmentId = ref('');
 const releaseTitle=ref('');
@@ -79,6 +83,33 @@ const releaseDuplicateCheck = ref(false);
 const releaseDuplicateThreshold = ref('');
 const releaseAutoReturn = ref(false);
 const releaseAiEnabled=ref(false);
+const releaseAttachmentFile = ref(null);
+const releaseAttachmentRemoved = ref(false);
+const notificationPanelVisible = ref(false);
+const notificationPanelRef = ref(null);
+const notifications = ref([]);
+const notificationsLoading = ref(false);
+const courseMembers = ref([]);
+const courseMembersLoading = ref(false);
+const members = ref(false);
+const teacherReviewDialogVisible = ref(false);
+const teacherReviewLoading = ref(false);
+const teacherReviewTarget = ref(null);
+const teacherReviewScore = ref('');
+const teacherReviewComment = ref('');
+const teacherReviewPreviewType = ref('none');
+const teacherReviewPreviewText = ref('');
+const teacherReviewPreviewHtml = ref('');
+const teacherReviewPreviewUrl = ref('');
+const teacherReviewUnsupportedMessage = ref('');
+const courseSkinInputRef = ref(null);
+const courseLearningHeaderRef = ref(null);
+const courseLearningTabRefs = ref({});
+const courseLearningIndicatorStyle = ref({
+  width: '0px',
+  transform: 'translateX(0px)',
+  opacity: '0'
+});
 
 let courseCode=ref('');
 let courseName=ref('');
@@ -98,6 +129,22 @@ const archivedLearnedCourses = ref([]);
 const archivedTaughtCourses = ref([]);
 const learnedSemesterGroups = ref([]);
 const taughtSemesterGroups = ref([]);
+const draggedArchivedCourseId = ref('');
+const archiveSortSaving = ref(false);
+const activeArchivedCourseMenuId = ref('');
+const COURSE_SKIN_STORAGE_KEY = 'course_detail_skin_map';
+
+const loadCourseSkinMap = () => {
+  try {
+    return JSON.parse(localStorage.getItem(COURSE_SKIN_STORAGE_KEY) || '{}');
+  } catch (error) {
+    console.log('读取课程皮肤失败：', error);
+    return {};
+  }
+};
+
+const courseSkinMap = ref(loadCourseSkinMap());
+const courseSearchKeyword = ref('');
 
 // 移除了之前 watch(releaseImmediate) 清空时间的逻辑，让它保留初始化时生成的当前时间
 
@@ -229,7 +276,11 @@ const closeArchiveMenu = () => {
   archiveMenuPosition.value = { x: 0, y: 0 };
 };
 
-const handleGlobalClick = () => { closeArchiveMenu(); };
+const handleGlobalClick = () => {
+  closeArchiveMenu();
+  activeArchivedCourseMenuId.value = '';
+  createJoinDropdownOpen.value = false;
+};
 onMounted(() => { document.addEventListener('click', handleGlobalClick); });
 onUnmounted(() => { document.removeEventListener('click', handleGlobalClick); });
 
@@ -274,6 +325,7 @@ const refreshCourseList = async () => {
 const openArchiveManager = async (type) => {
   archivedCourseType.value = type;
   showArchiveManager.value = true;
+  activeArchivedCourseMenuId.value = '';
   await loadArchivedCourses(type);
 };
 
@@ -286,18 +338,22 @@ const loadArchivedCourses = async (type) => {
     const data = response.data;
     if (data.success) {
       const courses = (type === 'taught' ? data.taught : data.learned) || [];
-      const groups = groupBySemester(courses);
-      if (type === 'taught') {
-        archivedTaughtCourses.value = courses;
-        taughtSemesterGroups.value = groups;
-      } else {
-        archivedLearnedCourses.value = courses;
-        learnedSemesterGroups.value = groups;
-      }
+      updateArchivedCourseState(type, courses);
     }
   } catch (error) {
     console.log("加载归档课程失败：", error);
     ElMessage.error("加载归档课程失败");
+  }
+};
+
+const updateArchivedCourseState = (type, courses) => {
+  const groups = groupBySemester(courses);
+  if (type === 'taught') {
+    archivedTaughtCourses.value = courses;
+    taughtSemesterGroups.value = groups;
+  } else {
+    archivedLearnedCourses.value = courses;
+    learnedSemesterGroups.value = groups;
   }
 };
 
@@ -312,6 +368,125 @@ const groupBySemester = (courses) => {
   return Object.entries(groups)
     .sort((a, b) => b[0].localeCompare(a[0]))
     .map(([name, courses]) => ({ name, courses }));
+};
+
+const getCurrentArchivedCourses = () => (
+  archivedCourseType.value === 'taught' ? archivedTaughtCourses.value : archivedLearnedCourses.value
+);
+
+const reorderArchivedCourses = (courses, draggedId, targetId) => {
+  const fromIndex = courses.findIndex(course => course?.id === draggedId);
+  const toIndex = courses.findIndex(course => course?.id === targetId);
+  if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) {
+    return courses;
+  }
+  const nextCourses = [...courses];
+  const [movedCourse] = nextCourses.splice(fromIndex, 1);
+  nextCourses.splice(toIndex, 0, movedCourse);
+  return nextCourses;
+};
+
+const persistArchivedCourseOrder = async (type, courses) => {
+  archiveSortSaving.value = true;
+  try {
+    const response = await axios.post(`${API_BASE}/reorder-archived-courses`, {
+      accountId: userStore.account?.accountId,
+      courseType: type,
+      orderedCourseIds: courses.map(course => course?.id).filter(Boolean)
+    });
+    const data = response.data;
+    if (!data.success) {
+      ElMessage.error(data.message || '归档课程排序保存失败');
+      await loadArchivedCourses(type);
+      return;
+    }
+    const latestCourses = (type === 'taught' ? data.taught : data.learned) || courses;
+    updateArchivedCourseState(type, latestCourses);
+    ElMessage.success(data.message || '归档课程排序已更新');
+  } catch (error) {
+    console.log('归档课程排序保存失败：', error);
+    ElMessage.error('归档课程排序保存失败，请稍后重试');
+    await loadArchivedCourses(type);
+  } finally {
+    archiveSortSaving.value = false;
+  }
+};
+
+const handleArchivedCourseDragStart = (courseId) => {
+  activeArchivedCourseMenuId.value = '';
+  draggedArchivedCourseId.value = courseId;
+};
+
+const handleArchivedCourseDragOver = (event) => {
+  event.preventDefault();
+};
+
+const handleArchivedCourseDrop = async (targetCourseId) => {
+  const draggedCourseId = draggedArchivedCourseId.value;
+  draggedArchivedCourseId.value = '';
+  if (!draggedCourseId || !targetCourseId || draggedCourseId === targetCourseId || archiveSortSaving.value) {
+    return;
+  }
+  const currentCourses = getCurrentArchivedCourses();
+  const nextCourses = reorderArchivedCourses(currentCourses, draggedCourseId, targetCourseId);
+  if (nextCourses === currentCourses) {
+    return;
+  }
+  updateArchivedCourseState(archivedCourseType.value, nextCourses);
+  await persistArchivedCourseOrder(archivedCourseType.value, nextCourses);
+};
+
+const handleArchivedCourseDragEnd = () => {
+  draggedArchivedCourseId.value = '';
+};
+
+const toggleArchivedCourseMenu = (event, courseId) => {
+  event.preventDefault();
+  event.stopPropagation();
+  activeArchivedCourseMenuId.value = activeArchivedCourseMenuId.value === courseId ? '' : courseId;
+};
+
+const closeArchivedCourseMenu = () => {
+  activeArchivedCourseMenuId.value = '';
+};
+
+const handleArchivedCourseAction = async (action, course) => {
+  closeArchivedCourseMenu();
+  if (!course?.id) {
+    ElMessage.error('未找到课程信息');
+    return;
+  }
+  if (action === 'restore') {
+    await unarchiveCourse(course.id);
+    return;
+  }
+  const actionText = action === 'finish' ? '结课' : '删除';
+  const confirmText = archivedCourseType.value === 'taught'
+    ? `确认${actionText}课程“${course.name || course.id}”吗？操作后首页将不再显示。`
+    : `确认删除课程“${course.name || course.id}”吗？操作后归档和首页都不再显示。`;
+  if (!window.confirm(confirmText)) {
+    return;
+  }
+  try {
+    const response = await axios.post(`${API_BASE}/archived-course-action`, {
+      accountId: userStore.account?.accountId,
+      courseId: course.id,
+      courseType: archivedCourseType.value,
+      action
+    });
+    const data = response.data;
+    if (!data.success) {
+      ElMessage.error(data.message || `${actionText}失败`);
+      return;
+    }
+    const latestCourses = (archivedCourseType.value === 'taught' ? data.taught : data.learned) || [];
+    updateArchivedCourseState(archivedCourseType.value, latestCourses);
+    await refreshCourseList();
+    ElMessage.success(data.message || `${actionText}成功`);
+  } catch (error) {
+    console.log(`${actionText}课程失败：`, error);
+    ElMessage.error(`${actionText}失败，请稍后重试`);
+  }
 };
 
 const unarchiveCourse = async (courseId) => {
@@ -365,6 +540,9 @@ function handleDocumentClick(event) {
   if (!userMenuRef.value?.contains(event.target)) {
     closeUserMenu();
   }
+  if (!notificationPanelRef.value?.contains(event.target)) {
+    notificationPanelVisible.value = false;
+  }
 }
 function handleUserMenuAction(action) {
   closeUserMenu();
@@ -372,9 +550,19 @@ function handleUserMenuAction(action) {
 }
 onMounted(() => {
   document.addEventListener('click', handleDocumentClick);
+  loadNotifications();
+  window.addEventListener('resize', updateCourseLearningIndicator);
 });
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleDocumentClick);
+  cleanupTeacherReviewPreview();
+  window.removeEventListener('resize', updateCourseLearningIndicator);
+});
+
+watch(teacherReviewDialogVisible, (value) => {
+  if (!value) {
+    cleanupTeacherReviewPreview();
+  }
 });
 function goToCourse(){
   // 清除所有子页面状态，返回到主列表
@@ -383,11 +571,13 @@ function goToCourse(){
   showLearnAssignment.value = false;
   displayReleaseAssignment.value = false;
   currentCourseId.value = '';
+  members.value = false;
 }
 function backToCourseContent(){
   showTeacherAssignment.value = false;
   showLearnAssignment.value = false;
   displayReleaseAssignment.value = false;
+  members.value = false;
 }
 function handleITeachClick(){
   iTeach.value=true;
@@ -397,6 +587,18 @@ function handleILearnClick(){
   iLearn.value=true;
   iTeach.value=false;
 }
+const syncMainCourseTabByIdentity = (currentIdentity) => {
+  if (currentIdentity === '老师') {
+    iTeach.value = true;
+    iLearn.value = false;
+    return;
+  }
+  iTeach.value = false;
+  iLearn.value = true;
+};
+watch(identity, (currentIdentity) => {
+  syncMainCourseTabByIdentity(currentIdentity);
+}, { immediate: true });
 //课程详情页面
 let courseLearning=ref(true);
 let learningAnalysis=ref(false);
@@ -459,6 +661,7 @@ function handleClickContent(){
  givePublicNotice.value=false;
  topic.value=false;
  interactiveAnswer.value=false;
+ members.value=false;
 }
 function handleClickInteractiveCourseware(){
   content.value=false;
@@ -470,6 +673,7 @@ function handleClickInteractiveCourseware(){
   givePublicNotice.value=false;
   topic.value=false;
   interactiveAnswer.value=false;
+  members.value=false;
 }
 function handleClickHomework(){
   content.value=false;
@@ -481,6 +685,7 @@ function handleClickHomework(){
   givePublicNotice.value=false;
   topic.value=false;
   interactiveAnswer.value=false;
+  members.value=false;
 }
 function handleClickTest(){
   content.value=false;
@@ -492,6 +697,7 @@ function handleClickTest(){
   givePublicNotice.value=false;
   topic.value=false;
   interactiveAnswer.value=false;
+  members.value=false;
 }
 function handleClickData(){
   content.value=false;
@@ -503,6 +709,7 @@ function handleClickData(){
   givePublicNotice.value=false;
   topic.value=false;
   interactiveAnswer.value=false;
+  members.value=false;
 }
 function handleClickTencentConference(){
   content.value=false;
@@ -514,6 +721,7 @@ function handleClickTencentConference(){
   givePublicNotice.value=false;
   topic.value=false;
   interactiveAnswer.value=false;
+  members.value=false;
 }
 function handleClickGivePublicNotice(){
   content.value=false;
@@ -525,6 +733,7 @@ function handleClickGivePublicNotice(){
   givePublicNotice.value=true;
   topic.value=false;
   interactiveAnswer.value=false;
+  members.value=false;
 }
 function handleClickTopic(){
   content.value=false;
@@ -536,6 +745,7 @@ function handleClickTopic(){
   givePublicNotice.value=false;
   topic.value=true;
   interactiveAnswer.value=false;
+  members.value=false;
 }
 function handleClickInteractiveAnswer(){
   content.value=false;
@@ -547,6 +757,20 @@ function handleClickInteractiveAnswer(){
   givePublicNotice.value=false;
   topic.value=false;
   interactiveAnswer.value=true;
+  members.value=false;
+}
+async function handleClickMembers(){
+  content.value=false;
+  interactiveCourseware.value=false;
+  homework.value=false;
+  test.value=false;
+  data.value=false;
+  tencentConference.value=false;
+  givePublicNotice.value=false;
+  topic.value=false;
+  interactiveAnswer.value=false;
+  members.value=true;
+  await loadCourseMembers();
 }
 const courseAssignmentsMode = computed(() => (
   showTeacherAssignment.value || showLearnAssignment.value || displayReleaseAssignment.value
@@ -563,6 +787,82 @@ const currentHeaderThirdCrumb = computed(() => {
   }
   return '';
 });
+const activeCourseLearningTabKey = computed(() => {
+  if (interactiveCourseware.value) return 'interactiveCourseware';
+  if (homework.value) return 'homework';
+  if (test.value) return 'test';
+  if (data.value) return 'data';
+  if (tencentConference.value) return 'tencentConference';
+  if (givePublicNotice.value) return 'givePublicNotice';
+  if (topic.value) return 'topic';
+  if (interactiveAnswer.value) return 'interactiveAnswer';
+  if (members.value) return 'members';
+  return 'content';
+});
+const currentCourseTopLabel = computed(() => {
+  if (learningAnalysis.value) return '学情分析';
+  if (gradeManagement.value) return '成绩管理';
+  if (courseIntroduction.value) return '课程介绍';
+  if (knowledgeGraph.value) return '知识图谱';
+  return '课程内容';
+});
+const searchPlaceholder = computed(() => (
+  userStore.account?.identity === '老师' && iTeach.value ? '搜索我教的课程' : '搜索我学的课程'
+));
+const normalizedCourseSearchKeyword = computed(() => courseSearchKeyword.value.trim().toLowerCase());
+const matchCourseSearch = (courseItem, keyword) => {
+  if (!keyword) {
+    return true;
+  }
+  const haystack = [
+    courseItem?.name,
+    courseItem?.classes,
+    courseItem?.id,
+    courseItem?.teacher,
+    courseItem?.time
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  return haystack.includes(keyword);
+};
+const filteredTaughtCourses = computed(() => taughtCourses.value.filter(courseItem => (
+  courseItem && matchCourseSearch(courseItem, normalizedCourseSearchKeyword.value)
+)));
+const filteredLearnedCourses = computed(() => learnedCourses.value.filter(courseItem => (
+  courseItem && matchCourseSearch(courseItem, normalizedCourseSearchKeyword.value)
+)));
+const setCourseLearningTabRef = (key) => (element) => {
+  if (element) {
+    courseLearningTabRefs.value[key] = element;
+    return;
+  }
+  delete courseLearningTabRefs.value[key];
+};
+const updateCourseLearningIndicator = async () => {
+  await nextTick();
+  const container = courseLearningHeaderRef.value;
+  const activeKey = activeCourseLearningTabKey.value;
+  const activeButton = courseLearningTabRefs.value[activeKey];
+  if (!container || !activeButton || assignmentOverlayActive.value || !courseLearning.value) {
+    courseLearningIndicatorStyle.value = {
+      width: '0px',
+      transform: 'translateX(0px)',
+      opacity: '0'
+    };
+    return;
+  }
+  const containerRect = container.getBoundingClientRect();
+  const activeRect = activeButton.getBoundingClientRect();
+  courseLearningIndicatorStyle.value = {
+    width: `${Math.round(activeRect.width)}px`,
+    transform: `translateX(${Math.round(activeRect.left - containerRect.left)}px)`,
+    opacity: '1'
+  };
+};
+watch([activeCourseLearningTabKey, assignmentOverlayActive, courseLearning, showCourseDetails], () => {
+  updateCourseLearningIndicator();
+}, { immediate: true });
 
 const validAssignmentDetails = computed(() => assignmentDetails.value);
 
@@ -635,6 +935,39 @@ const normalizeUploadedFile = (file) => {
   };
 };
 
+const normalizeServerAttachmentFile = (assignmentDetail) => {
+  if (!assignmentDetail?.attachmentName) return null;
+  const size = Number(assignmentDetail?.attachmentSize || 0);
+  const sizeText = size
+    ? (size < 1024 * 1024
+      ? `${Math.max(size / 1024, 0.1).toFixed(1)} KB`
+      : `${(size / (1024 * 1024)).toFixed(1)} MB`)
+    : '';
+  return {
+    name: assignmentDetail.attachmentName,
+    size,
+    sizeText,
+    rawFile: null,
+    fileDownloadUrl: assignmentDetail?.attachmentDownloadUrl || ''
+  };
+};
+
+const getFileExtension = (fileName = '') => {
+  const safeName = String(fileName || '').trim().toLowerCase();
+  const dotIndex = safeName.lastIndexOf('.');
+  return dotIndex >= 0 ? safeName.substring(dotIndex + 1) : '';
+};
+
+const isArchiveExtension = (extension) => ['zip', 'rar', '7z', 'tar', 'gz'].includes(extension);
+const isImageExtension = (extension) => ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg'].includes(extension);
+const isTextExtension = (extension) => ['txt', 'md', 'json', 'js', 'ts', 'java', 'py', 'xml', 'html', 'css', 'scss', 'sql', 'csv', 'log', 'yml', 'yaml'].includes(extension);
+const isPdfExtension = (extension) => extension === 'pdf';
+const isDocxExtension = (extension) => extension === 'docx';
+const isDocExtension = (extension) => extension === 'doc';
+
+const unreadNotificationCount = computed(() => notifications.value.filter(item => !item?.readStatus).length);
+const teacherMemberCount = computed(() => courseMembers.value.length);
+
 const extractAssignmentFileNameFromHeaders = (headers, fallbackName) => {
   const disposition = headers?.['content-disposition'] || headers?.['Content-Disposition'];
   if (!disposition) return fallbackName;
@@ -659,6 +992,17 @@ const normalizeAssignmentFile = (assignmentDetail) => {
     rawFile: null,
     fileDownloadUrl: assignmentDetail?.fileDownloadUrl || ''
   };
+};
+
+const cleanupTeacherReviewPreview = () => {
+  if (teacherReviewPreviewUrl.value) {
+    URL.revokeObjectURL(teacherReviewPreviewUrl.value);
+  }
+  teacherReviewPreviewUrl.value = '';
+  teacherReviewPreviewType.value = 'none';
+  teacherReviewPreviewText.value = '';
+  teacherReviewPreviewHtml.value = '';
+  teacherReviewUnsupportedMessage.value = '';
 };
 
 const syncScoreDrafts = (list) => {
@@ -724,6 +1068,8 @@ const resetReleaseForm = (assignmentDetail = null) => {
   releaseDuplicateCheck.value = Boolean(assignmentDetail?.duplicateCheck);
   releaseDuplicateThreshold.value = assignmentDetail?.duplicateThreshold || '30';
   releaseAutoReturn.value = Boolean(assignmentDetail?.autoReturn);
+  releaseAttachmentFile.value = normalizeServerAttachmentFile(assignmentDetail);
+  releaseAttachmentRemoved.value = false;
 };
 
 const getTeacherAssignmentStageText = (assignmentDetail) => {
@@ -773,20 +1119,40 @@ const handleSubmissionFileChange = (event) => {
   selectedSubmissionFile.value = normalizeUploadedFile(file);
 };
 
+const handleReleaseAttachmentChange = (event) => {
+  const file = event?.target?.files?.[0];
+  if (!file) return;
+  releaseAttachmentFile.value = normalizeUploadedFile(file);
+  releaseAttachmentRemoved.value = false;
+  if (event?.target) {
+    event.target.value = '';
+  }
+};
+
+const removeReleaseAttachment = () => {
+  if (!releaseAttachmentFile.value) return;
+  releaseAttachmentRemoved.value = Boolean(releaseEditMode.value && !releaseAttachmentFile.value?.rawFile);
+  releaseAttachmentFile.value = null;
+};
+
+const fetchAssignmentFileResponse = async (assignmentDetail) => {
+  return axios.get(`${API_BASE}/assignment-file`, {
+    params: {
+      accountId: assignmentDetail?.accountId || userStore.account?.accountId,
+      id: assignmentDetail?.id || currentCourseId.value,
+      assignmentId: assignmentDetail?.assignmentId
+    },
+    responseType: 'blob'
+  });
+};
+
 const downloadAssignmentFile = async (assignmentDetail, fallbackName) => {
   if (!assignmentDetail?.assignmentId) {
     ElMessage.warning('未找到作业附件信息');
     return;
   }
   try {
-    const response = await axios.get(`${API_BASE}/assignment-file`, {
-      params: {
-        accountId: assignmentDetail?.accountId || userStore.account?.accountId,
-        id: assignmentDetail?.id || currentCourseId.value,
-        assignmentId: assignmentDetail.assignmentId
-      },
-      responseType: 'blob'
-    });
+    const response = await fetchAssignmentFileResponse(assignmentDetail);
     const blob = new Blob([response.data]);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -798,6 +1164,34 @@ const downloadAssignmentFile = async (assignmentDetail, fallbackName) => {
     URL.revokeObjectURL(url);
   } catch (error) {
     console.log('下载作业附件失败：', error);
+    ElMessage.error('下载作业附件失败，请稍后重试');
+  }
+};
+
+const downloadAssignmentResource = async (assignmentDetail) => {
+  if (!assignmentDetail?.assignmentId) {
+    ElMessage.warning('未找到作业附件信息');
+    return;
+  }
+  try {
+    const response = await axios.get(`${API_BASE}/assignment-resource`, {
+      params: {
+        id: assignmentDetail?.id || currentCourseId.value,
+        assignmentId: assignmentDetail.assignmentId
+      },
+      responseType: 'blob'
+    });
+    const blob = new Blob([response.data]);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = extractAssignmentFileNameFromHeaders(response.headers, assignmentDetail?.attachmentName || 'assignment-resource');
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    console.log('下载作业资源失败：', error);
     ElMessage.error('下载作业附件失败，请稍后重试');
   }
 };
@@ -854,6 +1248,112 @@ const handleTeacherAiReviewToggle = async (assignmentDetail, checked) => {
   }
 };
 
+const loadNotifications = async () => {
+  if (!userStore.account?.accountId) {
+    notifications.value = [];
+    return;
+  }
+  notificationsLoading.value = true;
+  try {
+    const response = await axios.get(`${API_BASE}/notifications`, {
+      params: {
+        accountId: userStore.account.accountId
+      }
+    });
+    const data = response.data;
+    if (data.success) {
+      notifications.value = (data.notifications || []).filter(Boolean);
+      return;
+    }
+    ElMessage.error(data.message || '通知加载失败');
+  } catch (error) {
+    console.log('通知加载失败：', error);
+    ElMessage.error('通知加载失败，请稍后重试');
+  } finally {
+    notificationsLoading.value = false;
+  }
+};
+
+const toggleNotificationPanel = async () => {
+  notificationPanelVisible.value = !notificationPanelVisible.value;
+  if (notificationPanelVisible.value) {
+    await loadNotifications();
+  }
+};
+
+const markNotificationAsRead = async (notification, silent = false) => {
+  if (!notification?.id || notification?.readStatus) {
+    return true;
+  }
+  try {
+    const response = await axios.post(`${API_BASE}/notifications/read-one`, {
+      notificationId: notification.id,
+      accountId: userStore.account?.accountId
+    });
+    const data = response.data;
+    if (!data.success) {
+      if (!silent) {
+        ElMessage.error(data.message || '通知已读失败');
+      }
+      return false;
+    }
+    notifications.value = notifications.value.map(item => (
+      item?.id === notification.id ? { ...item, readStatus: true } : item
+    ));
+    return true;
+  } catch (error) {
+    console.log('通知已读失败：', error);
+    if (!silent) {
+      ElMessage.error('通知已读失败，请稍后重试');
+    }
+    return false;
+  }
+};
+
+const markAllNotificationsAsRead = async () => {
+  try {
+    const response = await axios.post(`${API_BASE}/notifications/read-all`, {
+      accountId: userStore.account?.accountId
+    });
+    const data = response.data;
+    if (!data.success) {
+      ElMessage.error(data.message || '全部已读失败');
+      return;
+    }
+    notifications.value = notifications.value.map(item => ({ ...item, readStatus: true }));
+    ElMessage.success(data.message || '全部标记为已读');
+  } catch (error) {
+    console.log('全部通知已读失败：', error);
+    ElMessage.error('全部已读失败，请稍后重试');
+  }
+};
+
+const loadCourseMembers = async (courseId = currentCourseId.value) => {
+  if (!courseId || userStore.account?.identity !== '老师') {
+    courseMembers.value = [];
+    return;
+  }
+  courseMembersLoading.value = true;
+  try {
+    const response = await axios.get(`${API_BASE}/course-members`, {
+      params: {
+        courseId
+      }
+    });
+    const data = response.data;
+    if (data.success) {
+      courseMembers.value = (data.accounts || []).filter(Boolean);
+      return;
+    }
+    ElMessage.error(data.message || '成员加载失败');
+  } catch (error) {
+    console.log('课程成员加载失败：', error);
+    ElMessage.error('课程成员加载失败，请稍后重试');
+  } finally {
+    courseMembersLoading.value = false;
+  }
+};
+
 const loadTeacherSubmissionDetails = async (assignmentDetail) => {
   try{
     const response=await axios.post('http://localhost:8080/check-assignment-submit',{
@@ -903,6 +1403,33 @@ const openTeacherAssignmentDetail = async (assignmentDetail) => {
   showTeacherAssignment.value = true;
 };
 
+const handleNotificationClick = async (notification) => {
+  if (!notification) return;
+  await markNotificationAsRead(notification, true);
+  notificationPanelVisible.value = false;
+  if (!notification.courseId) {
+    return;
+  }
+  await handleDetail(notification.courseId);
+  if (userStore.account?.identity === '老师') {
+    handleClickHomework();
+    if (notification.assignmentId) {
+      const targetAssignment = assignmentDetails.value.find(item => item?.assignmentId === notification.assignmentId);
+      if (targetAssignment) {
+        await openTeacherAssignmentDetail(targetAssignment);
+      }
+    }
+    return;
+  }
+  handleClickHomework();
+  if (notification.assignmentId) {
+    const targetAssignment = assignmentDetails.value.find(item => item?.assignmentId === notification.assignmentId);
+    if (targetAssignment) {
+      handleViewLearnAssignmentDetail(targetAssignment);
+    }
+  }
+};
+
 //展示作业的详情
 const handleDetail=async(id)=>{
   currentCourseId.value = id; // 记录当前课程ID
@@ -920,7 +1447,9 @@ const handleDetail=async(id)=>{
      console.log(data.assignments);
      userStore.setCourse(data.course);
      showCourseDetails.value=true;
-     ElMessage.success(successMessage.value);
+     if (userStore.account?.identity === '老师') {
+       await loadCourseMembers(id);
+     }
    }else {
       errorMessage.value = data.message;
       ElMessage.error(errorMessage.value);
@@ -1212,19 +1741,26 @@ const confirmReleaseAssignment = async () => {
       return;
     }
 
+    const publishTime = releaseEditMode.value
+      ? releasePublishTime.value
+      : (releaseImmediate.value ? releasePublishTime.value : '');
+    const formData = new FormData();
+    formData.append('title', releaseTitle.value);
+    formData.append('publishTime', publishTime);
+    formData.append('deadline', releaseDeadline.value || '');
+    formData.append('assignmentType', releaseType.value || '个人作业');
+    formData.append('content', releaseDetail.value || '');
+    formData.append('totalScore', String(totalScore));
+    formData.append('aiEnabled', String(Boolean(releaseAiEnabled.value)));
+    if (releaseAttachmentFile.value?.rawFile) {
+      formData.append('file', releaseAttachmentFile.value.rawFile);
+    }
+
     if (releaseEditMode.value && editingAssignmentId.value) {
-      const response = await axios.post(`${API_BASE}/update-course-assignment`, {
-        id: currentCourseId.value,
-        assignmentId: editingAssignmentId.value,
-        assignment: {
-          title: releaseTitle.value,
-          deadline: releaseDeadline.value,
-          assignmentType: releaseType.value,
-          content: releaseDetail.value,
-          totalScore,
-          aiEnabled: releaseAiEnabled.value
-        }
-      });
+      formData.append('id', currentCourseId.value);
+      formData.append('assignmentId', editingAssignmentId.value);
+      formData.append('removeAttachment', String(Boolean(releaseAttachmentRemoved.value)));
+      const response = await axios.post(`${API_BASE}/update-course-assignment-form`, formData);
       const data = response.data;
       if (!data.success) {
         errorMessage.value = data.message || '作业更新失败';
@@ -1235,34 +1771,13 @@ const confirmReleaseAssignment = async () => {
       displayReleaseAssignment.value = false;
       releaseEditMode.value = false;
       editingAssignmentId.value = '';
+      cleanupTeacherReviewPreview();
       ElMessage.success(data.message || '作业更新成功');
       return;
     }
-
-    const assignment = {
-      title: releaseTitle.value,
-      deadline: releaseDeadline.value,
-      assignmentType: releaseType.value,
-      content: releaseDetail.value,
-      totalScore: totalScore,  // 使用转换后的数字类型
-      aiEnabled: releaseAiEnabled.value,
-      tag: releaseTag.value,
-      knowledgeAgreement: releaseKnowledgeAgreement.value,
-      environment: releaseEnvironment.value,
-      chapter: releaseChapter.value,
-      allowFormat: releaseAllowFormat.value,
-      lateForbidden: releaseLateForbidden.value,
-      duplicateCheck: releaseDuplicateCheck.value,
-      duplicateThreshold: releaseDuplicateThreshold.value,
-      autoReturn: releaseAutoReturn.value,
-      publishTime: releaseImmediate.value ? releasePublishTime.value : ''
-    };
-
-    const response = await axios.post("http://localhost:8080/release-assignment", {
-      accountId:userStore.account?.accountId,
-      id: currentCourseId.value,
-      assignment: assignment
-    });
+    formData.append('accountId', userStore.account?.accountId || '');
+    formData.append('id', currentCourseId.value);
+    const response = await axios.post(`${API_BASE}/release-assignment-form`, formData);
 
     const data = response.data;
     if (data.success) {
@@ -1297,7 +1812,141 @@ function fromReleaseBack(){
   releaseEditMode.value = false;
   editingAssignmentId.value = '';
   activeTeacherAssignmentMenu.value = '';
+  releaseAttachmentRemoved.value = false;
 }
+
+const handleRemindStudent = async (assignmentDetail) => {
+  if (!assignmentDetail?.accountId) {
+    ElMessage.warning('未找到需要催交的学生');
+    return;
+  }
+  try {
+    const response = await axios.post(`${API_BASE}/remind-assignment`, {
+      id: assignmentDetail?.id || currentCourseId.value,
+      assignmentId: assignmentDetail.assignmentId,
+      targetAccountId: assignmentDetail.accountId,
+      teacherAccountId: userStore.account?.accountId
+    });
+    const data = response.data;
+    if (!data.success) {
+      ElMessage.error(data.message || '催交失败');
+      return;
+    }
+    ElMessage.success(data.message || '催交成功');
+  } catch (error) {
+    console.log('催交失败：', error);
+    ElMessage.error('催交失败，请稍后重试');
+  }
+};
+
+const saveTeacherReview = async () => {
+  if (!teacherReviewTarget.value?.assignmentId) {
+    ElMessage.warning('未找到待批改作业');
+    return;
+  }
+  const nextScore = String(teacherReviewScore.value).trim();
+  if (!nextScore) {
+    ElMessage.warning('请输入分数');
+    return;
+  }
+  const numericScore = Number(nextScore);
+  if (Number.isNaN(numericScore)) {
+    ElMessage.warning('请输入有效分数');
+    return;
+  }
+  try {
+    const response = await axios.post(`${API_BASE}/correct-assignment`, {
+      accountId: teacherReviewTarget.value.accountId,
+      id: teacherReviewTarget.value.id,
+      assignmentId: teacherReviewTarget.value.assignmentId,
+      score: numericScore,
+      teacherComment: teacherReviewComment.value.trim()
+    });
+    const data = response.data;
+    if (!data.success) {
+      ElMessage.error(data.message || '保存批阅失败');
+      return;
+    }
+    if (Array.isArray(data.assignments)) {
+      teacherSubmissionDetails.value = data.assignments.filter(Boolean);
+      syncScoreDrafts(teacherSubmissionDetails.value);
+    }
+    await fetchLatestAssignments();
+    syncCurrentAssignmentFromList();
+    teacherReviewDialogVisible.value = false;
+    ElMessage.success(data.message || '批阅已保存');
+  } catch (error) {
+    console.log('保存批阅失败：', error);
+    ElMessage.error('保存批阅失败，请稍后重试');
+  }
+};
+
+const handleOpenTeacherReview = async (assignmentDetail) => {
+  if (!assignmentDetail?.assignmentId) {
+    ElMessage.warning('未找到提交记录');
+    return;
+  }
+  const extension = getFileExtension(assignmentDetail?.fileName);
+  if (assignmentDetail?.fileName && isArchiveExtension(extension)) {
+    await downloadTeacherSubmissionFile(assignmentDetail);
+    ElMessage.info('压缩包附件已开始下载，请离线查看');
+    return;
+  }
+
+  teacherReviewDialogVisible.value = true;
+  teacherReviewLoading.value = true;
+  teacherReviewTarget.value = { ...assignmentDetail };
+  teacherReviewScore.value = assignmentDetail?.score ?? '';
+  teacherReviewComment.value = assignmentDetail?.teacherComment || '';
+  cleanupTeacherReviewPreview();
+
+  try {
+    if (!assignmentDetail?.fileName) {
+      teacherReviewPreviewType.value = 'text-only';
+      teacherReviewPreviewText.value = assignmentDetail?.submitContent || '该学生未上传附件，可直接填写评语与分数。';
+      return;
+    }
+    const response = await fetchAssignmentFileResponse(assignmentDetail);
+    const blob = new Blob([response.data], {
+      type: response.data?.type || assignmentDetail?.fileContentType || 'application/octet-stream'
+    });
+    if (isPdfExtension(extension)) {
+      teacherReviewPreviewType.value = 'pdf';
+      teacherReviewPreviewUrl.value = URL.createObjectURL(blob);
+      return;
+    }
+    if (isImageExtension(extension)) {
+      teacherReviewPreviewType.value = 'image';
+      teacherReviewPreviewUrl.value = URL.createObjectURL(blob);
+      return;
+    }
+    if (isTextExtension(extension)) {
+      teacherReviewPreviewType.value = 'text';
+      teacherReviewPreviewText.value = await blob.text();
+      return;
+    }
+    if (isDocxExtension(extension)) {
+      const arrayBuffer = await blob.arrayBuffer();
+      const result = await mammoth.convertToHtml({ arrayBuffer });
+      teacherReviewPreviewType.value = 'docx';
+      teacherReviewPreviewHtml.value = result.value || '<p>文档内容为空</p>';
+      return;
+    }
+    if (isDocExtension(extension)) {
+      teacherReviewPreviewType.value = 'unsupported';
+      teacherReviewUnsupportedMessage.value = '当前支持在线预览 docx、pdf、图片和文本文件，旧版 doc 请下载后查看。';
+      return;
+    }
+    teacherReviewPreviewType.value = 'unsupported';
+    teacherReviewUnsupportedMessage.value = '当前文件类型暂不支持在线预览，请下载后查看。';
+  } catch (error) {
+    console.log('加载批阅预览失败：', error);
+    teacherReviewPreviewType.value = 'unsupported';
+    teacherReviewUnsupportedMessage.value = '附件预览失败，请下载后查看原文件。';
+  } finally {
+    teacherReviewLoading.value = false;
+  }
+};
 
 const API_BASE = 'http://localhost:8080';
 const materialsTab = ref('attachment');
@@ -1465,6 +2114,85 @@ async function refreshMaterials() {
 }
 
 const currentCourseKey = computed(() => course.value?.id || currentCourseId.value || '');
+const currentCourseMemberCount = computed(() => {
+  if (courseMembers.value?.length) {
+    return courseMembers.value.length;
+  }
+  const count = Number(course.value?.number);
+  return Number.isFinite(count) ? count : 0;
+});
+const currentCourseBanner = computed(() => {
+  return courseSkinMap.value[currentCourseKey.value] || defaultCourseBanner;
+});
+const getCourseBannerById = (courseId) => {
+  if (!courseId) {
+    return defaultCourseBanner;
+  }
+  return courseSkinMap.value[courseId] || defaultCourseBanner;
+};
+const currentCourseBannerStyle = computed(() => ({
+  backgroundImage: `linear-gradient(rgba(78, 120, 157, 0.32), rgba(78, 120, 157, 0.32)), url("${currentCourseBanner.value}")`
+}));
+const getCourseCardHeaderStyle = (courseItem) => ({
+  backgroundImage: `linear-gradient(rgba(78, 120, 157, 0.18), rgba(78, 120, 157, 0.18)), url("${getCourseBannerById(courseItem?.id)}")`
+});
+
+const persistCourseSkinMap = () => {
+  localStorage.setItem(COURSE_SKIN_STORAGE_KEY, JSON.stringify(courseSkinMap.value));
+};
+
+const triggerCourseSkinPicker = () => {
+  courseSkinInputRef.value?.click();
+};
+
+const handleCourseSkinChange = (event) => {
+  const file = event?.target?.files?.[0];
+  if (!file) {
+    return;
+  }
+  if (!file.type.startsWith('image/')) {
+    ElMessage.error('请选择图片文件');
+    event.target.value = '';
+    return;
+  }
+  if (file.size > 2 * 1024 * 1024) {
+    ElMessage.error('图片大小请控制在 2MB 以内');
+    event.target.value = '';
+    return;
+  }
+  const courseId = currentCourseKey.value;
+  if (!courseId) {
+    ElMessage.error('未找到当前课程');
+    event.target.value = '';
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    courseSkinMap.value = {
+      ...courseSkinMap.value,
+      [courseId]: reader.result
+    };
+    persistCourseSkinMap();
+    ElMessage.success('课程皮肤已更新');
+  };
+  reader.onerror = () => {
+    ElMessage.error('读取图片失败，请重试');
+  };
+  reader.readAsDataURL(file);
+  event.target.value = '';
+};
+
+const resetCourseSkin = () => {
+  const courseId = currentCourseKey.value;
+  if (!courseId || !courseSkinMap.value[courseId]) {
+    return;
+  }
+  const nextMap = { ...courseSkinMap.value };
+  delete nextMap[courseId];
+  courseSkinMap.value = nextMap;
+  persistCourseSkinMap();
+  ElMessage.success('已恢复默认皮肤');
+};
 watch(
   [currentCourseKey, materialsCategory],
   ([key]) => {
@@ -1794,7 +2522,7 @@ async function deleteLink(linkItem) {
 </script>
 
 <template>
-  <header class="prep-topbar course-topbar">
+  <header v-if="!showCourseDetails" class="prep-topbar course-topbar">
     <div class="prep-topbar__left">
       <img class="prep-topbar__logo" src="@/assets/logo_blue.png" alt="Ai课堂派">
       <nav class="prep-topbar__nav">
@@ -1814,7 +2542,94 @@ async function deleteLink(linkItem) {
 
     <div class="prep-topbar__right">
       <button type="button" class="prep-topbar__more">⋯ 更多</button>
-      <button type="button" class="prep-topbar__bell">🔔</button>
+      <div ref="notificationPanelRef" class="prep-topbar__notification">
+        <button type="button" class="prep-topbar__bell" @click.stop="toggleNotificationPanel">
+          🔔
+          <span v-if="unreadNotificationCount" class="prep-topbar__bell-badge">
+            {{ unreadNotificationCount > 99 ? '99+' : unreadNotificationCount }}
+          </span>
+        </button>
+        <div v-if="notificationPanelVisible" class="notification-panel" @click.stop>
+          <div class="notification-panel__header">
+            <span>通知</span>
+            <button type="button" class="notification-panel__action" @click="markAllNotificationsAsRead">全部已读</button>
+          </div>
+          <div v-if="notificationsLoading" class="notification-panel__empty">加载中...</div>
+          <div v-else-if="!notifications.length" class="notification-panel__empty">暂无通知</div>
+          <div v-else class="notification-panel__list">
+            <button
+              v-for="notification in notifications"
+              :key="notification.id"
+              type="button"
+              class="notification-panel__item"
+              :class="{ unread: !notification.readStatus }"
+              @click="handleNotificationClick(notification)"
+            >
+              <div class="notification-panel__item-top">
+                <span class="notification-panel__title">{{ notification.title || '系统通知' }}</span>
+                <span class="notification-panel__time">{{ notification.createdAt || '' }}</span>
+              </div>
+              <div class="notification-panel__content">{{ notification.content || '暂无内容' }}</div>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div ref="userMenuRef" class="dropdown prep-topbar__user-menu">
+        <button type="button" class="prep-topbar__user" @click.stop="toggleUserMenu">
+          <img alt="用户头像" src="@/assets/课堂派头像.jpg"/>
+          <span>{{ displayName }}</span>
+        </button>
+        <div v-show="userMenuOpen" class="dropdown-content is-open">
+          <button @click="handleUserMenuAction(goToCourse)">我的课堂</button>
+          <button v-if="userStore.account?.identity==='老师'" @click="handleUserMenuAction(goToLessonPrep)">备课区</button>
+          <button @click="closeUserMenu">开通VIP</button>
+          <button @click="closeUserMenu">机构用户认证</button>
+          <button @click="handleUserMenuAction(goToPersonalSetting)">个人设置</button>
+          <button @click="handleUserMenuAction(goToLogin)">退出登录</button>
+        </div>
+      </div>
+    </div>
+  </header>
+  <header v-else class="course-detail-topbar">
+    <div class="course-detail-topbar__left">
+      <button type="button" class="course-detail-topbar__menu" @click="goToCourse">☰</button>
+      <button type="button" class="top-nav-current" @click="goToCourse">我的课堂</button>
+      <span class="course-breadcrumb-separator">〉</span>
+      <span class="course-breadcrumb-current">{{ currentCourseTopLabel }}</span>
+    </div>
+    <div class="course-detail-topbar__right">
+      <div ref="notificationPanelRef" class="prep-topbar__notification">
+        <button type="button" class="prep-topbar__bell" @click.stop="toggleNotificationPanel">
+          🔔
+          <span v-if="unreadNotificationCount" class="prep-topbar__bell-badge">
+            {{ unreadNotificationCount > 99 ? '99+' : unreadNotificationCount }}
+          </span>
+        </button>
+        <div v-if="notificationPanelVisible" class="notification-panel" @click.stop>
+          <div class="notification-panel__header">
+            <span>通知</span>
+            <button type="button" class="notification-panel__action" @click="markAllNotificationsAsRead">全部已读</button>
+          </div>
+          <div v-if="notificationsLoading" class="notification-panel__empty">加载中...</div>
+          <div v-else-if="!notifications.length" class="notification-panel__empty">暂无通知</div>
+          <div v-else class="notification-panel__list">
+            <button
+              v-for="notification in notifications"
+              :key="notification.id"
+              type="button"
+              class="notification-panel__item"
+              :class="{ unread: !notification.readStatus }"
+              @click="handleNotificationClick(notification)"
+            >
+              <div class="notification-panel__item-top">
+                <span class="notification-panel__title">{{ notification.title || '系统通知' }}</span>
+                <span class="notification-panel__time">{{ notification.createdAt || '' }}</span>
+              </div>
+              <div class="notification-panel__content">{{ notification.content || '暂无内容' }}</div>
+            </button>
+          </div>
+        </div>
+      </div>
       <div ref="userMenuRef" class="dropdown prep-topbar__user-menu">
         <button type="button" class="prep-topbar__user" @click.stop="toggleUserMenu">
           <img alt="用户头像" src="@/assets/课堂派头像.jpg"/>
@@ -1836,28 +2651,31 @@ async function deleteLink(linkItem) {
     <div class="top-course-container">
       <div class="top-course-container-header">
         <h2>置顶课程</h2>
-        <div class="course-dropdown">
-          <button class="create-join-course">＋创建/加入课程</button>
-          <div class="course-dropdown-content">
-            <el-button @click="createDialogVisible=true">创建课程</el-button>
-            <el-button @click="joinDialogVisible=true">加入课程</el-button>
+        <div class="course-dropdown" @click.stop>
+          <button class="create-join-course" @click="createJoinDropdownOpen = !createJoinDropdownOpen">＋创建/加入课程</button>
+          <div v-show="createJoinDropdownOpen" class="course-dropdown-content">
+            <el-button @click="createDialogVisible=true; createJoinDropdownOpen = false">创建课程</el-button>
+            <el-button @click="joinDialogVisible=true; createJoinDropdownOpen = false">加入课程</el-button>
           </div>
         </div>
       </div>
       <div class="top-course-container-body">
           <div class="course-container"  v-for="course in topCourses.filter(c => c)" :key="course&&course.id" @click="handleDetail(course.id)">
-            <div class="course-information-header">
+            <div class="course-information-header" :style="getCourseCardHeaderStyle(course)">
               <label class="course-time">{{course&&course.time}}</label>
               <label class="course-name">{{course&&course.name}}</label>
               <label class="course-classes">{{course&&course.classes}}</label>
-              <label class="course-code">{{course&&course.id}}</label>
+              <label class="course-code">
+                <img class="course-code-icon" :src="courseCodeQrIcon" alt="" aria-hidden="true">
+                <span class="course-code-text">加课码:{{ course && course.id }}</span>
+              </label>
             </div>
             <div class="course-information-footer">
               <div class="learn-div">
                 <div><span>负责人:{{course&&course.teacher}}</span></div>
                 <!-- 动态按钮：已置顶则显示“取消置顶”，否则显示“置顶” -->
                 <button
-                    @click="isCourseTop(course.id) ? handleCancelTop(course) : handleTop(course, 'teacher')"
+                    @click.stop="isCourseTop(course.id) ? handleCancelTop(course) : handleTop(course, 'teacher')"
                     class="top-placement">
                   {{ isCourseTop(course.id) ? '取消置顶' : '置顶' }}
                 </button>
@@ -1874,8 +2692,15 @@ async function deleteLink(linkItem) {
       </div>
       <button class="archive-manager-btn" @click="openArchiveManager(identity === '老师' ? 'taught' : 'learned')">归档课程</button>
       <div class="search" :class="{ 'search-focused': isSearchFocused }">
-        <input   @focus="isSearchFocused = true"  @blur="isSearchFocused = false" placeholder="搜索我学的课程">
-        <button>搜</button>
+        <input
+          v-model.trim="courseSearchKeyword"
+          @focus="isSearchFocused = true"
+          @blur="isSearchFocused = false"
+          :placeholder="searchPlaceholder"
+        >
+        <button type="button" class="search-icon-btn" aria-label="搜索">
+          <span class="search-icon"></span>
+        </button>
       </div>
     </div>
     <div class="teach-display-div" v-if="iTeach&&userStore.account?.identity==='老师'" >
@@ -1885,19 +2710,22 @@ async function deleteLink(linkItem) {
           <button @click="isFold=true" v-if="!isFold" >展开</button>
         </div>
         <div class="bottom-course-container-body" v-if="isFold">
-          <div class="course-container" v-for="course in taughtCourses.filter(c => c)" :key="course && course.id" @click="handleDetail(course.id)" >
-            <div class="course-information-header">
+          <div class="course-container" v-for="course in filteredTaughtCourses" :key="course && course.id" @click="handleDetail(course.id)" >
+            <div class="course-information-header" :style="getCourseCardHeaderStyle(course)">
               <label class="course-time">{{course&&course.time}}</label>
               <label class="course-name">{{course&&course.name}}</label>
               <label class="course-classes">{{course&&course.classes}}</label>
-              <label class="course-code">{{course&&course.id}}</label>
+              <label class="course-code">
+                <img class="course-code-icon" :src="courseCodeQrIcon" alt="" aria-hidden="true">
+                <span class="course-code-text">加课码:{{ course && course.id }}</span>
+              </label>
             </div>
             <div class="course-information-footer">
               <div class="teach-div">
                 <div ><span>成员{{course.number}}人</span></div>
                 <!-- 动态按钮：已置顶则显示“取消置顶”，否则显示“置顶” -->
                 <button
-                    @click="isCourseTop(course.id) ? handleCancelTop(course) : handleTop(course, 'teacher')"
+                    @click.stop="isCourseTop(course.id) ? handleCancelTop(course) : handleTop(course, 'teacher')"
                     class="top-placement"
                 >
                   {{ isCourseTop(course.id) ? '取消置顶' : '置顶' }}
@@ -1912,6 +2740,9 @@ async function deleteLink(linkItem) {
       <div v-if="!taughtCourses || taughtCourses.length === 0" class="empty-state">
         <p>暂无教授的课程</p>
       </div>
+      <div v-else-if="!filteredTaughtCourses.length" class="empty-state">
+        <p>未找到相关课程</p>
+      </div>
     </div>
     <div class="learn-display-div" v-if="iLearn">
       <div class="bottom-course-container">
@@ -1920,19 +2751,22 @@ async function deleteLink(linkItem) {
           <button @click="isFold=true" v-if="!isFold" >展开</button>
         </div>
         <div class="bottom-course-container-body" v-if="isFold">
-          <div class="course-container"  v-for="course in learnedCourses.filter(c => c)" :key="course.id" @click="handleDetail(course.id)" >
-            <div class="course-information-header">
+          <div class="course-container"  v-for="course in filteredLearnedCourses" :key="course.id" @click="handleDetail(course.id)" >
+            <div class="course-information-header" :style="getCourseCardHeaderStyle(course)">
               <label class="course-time">{{course.time}}</label>
               <label class="course-name">{{course.name}}</label>
               <label class="course-classes">{{course.classes}}</label>
-              <label class="course-code">{{course.id}}</label>
+              <label class="course-code">
+                <img class="course-code-icon" :src="courseCodeQrIcon" alt="" aria-hidden="true">
+                <span class="course-code-text">加课码:{{ course.id }}</span>
+              </label>
             </div>
             <div class="course-information-footer">
               <div class="learn-div">
                 <div><span>负责人:{{course.teacher}}</span></div>
                 <!-- 动态按钮：已置顶则显示“取消置顶”，否则显示“置顶” -->
                 <button
-                    @click="isCourseTop(course.id) ? handleCancelTop(course) : handleTop(course, 'teacher')"
+                    @click.stop="isCourseTop(course.id) ? handleCancelTop(course) : handleTop(course, 'teacher')"
                     class="top-placement"
                 >
                   {{ isCourseTop(course.id) ? '取消置顶' : '置顶' }}
@@ -1947,14 +2781,42 @@ async function deleteLink(linkItem) {
       <div v-if="!learnedCourses || learnedCourses.length === 0" class="empty-state">
         <p>暂无学习的课程</p>
       </div>
+      <div v-else-if="!filteredLearnedCourses.length" class="empty-state">
+        <p>未找到相关课程</p>
+      </div>
     </div>
 
   </div>
   <div class="course-details" v-if="showCourseDetails">
     <div class="course-details-header" v-if="!assignmentOverlayActive">
-      <div class="course-details-header-title">
-       <div>{{course.id}}</div>
-        <div>{{course.name}}</div>
+      <div class="course-details-hero" :style="currentCourseBannerStyle">
+        <div class="course-details-hero__content">
+          <div class="course-details-hero__summary">
+            <div class="course-details-hero__title">{{ course.name || '未命名课程' }}</div>
+            <div class="course-details-hero__class">{{ course.classes || '未设置班级' }}</div>
+            <div class="course-details-hero__meta">
+              <span>加课码 {{ course.id || '--' }}</span>
+              <span>已加入{{ currentCourseMemberCount }}人</span>
+            </div>
+          </div>
+          <div v-if="userStore.account?.identity === '老师'" class="course-details-hero__actions">
+            <input
+              ref="courseSkinInputRef"
+              type="file"
+              accept="image/*"
+              class="student-hidden-file-input"
+              @change="handleCourseSkinChange"
+            >
+            <button class="course-skin-btn" @click="triggerCourseSkinPicker">更换皮肤</button>
+            <button
+              v-if="courseSkinMap[currentCourseKey]"
+              class="course-skin-btn is-secondary"
+              @click="resetCourseSkin"
+            >
+              恢复默认
+            </button>
+          </div>
+        </div>
       </div>
       <div class="course-details-header-content">
         <button class="course-learning" @click="handleClickCourseLearning" :class="{'active':courseLearning}" >课程学习</button>
@@ -1970,16 +2832,18 @@ async function deleteLink(linkItem) {
     </div>
     <div>
       <div class="course-learning-container" v-if="courseLearning">
-        <div class="course-learning-header" v-if="!assignmentOverlayActive">
-          <button class="" @click="handleClickContent" :class="{'active':content}">目录</button>
-          <button class="" @click="handleClickInteractiveCourseware" :class="{'active':interactiveCourseware}">互动课件</button>
-          <button class="" @click="handleClickHomework" :class="{'active':homework}">作业</button>
-          <button class="" @click="handleClickTest" :class="{'active':test}">测试</button>
-          <button class="" @click="handleClickData" :class="{'active':data}">资料</button>
-          <button class="" @click="handleClickTencentConference" :class="{'active':tencentConference}">腾讯会议</button>
-          <button class="" @click="handleClickGivePublicNotice" :class="{'active':givePublicNotice}">公告</button>
-          <button class="" @click="handleClickTopic" :class="{'active':topic}">话题</button>
-          <button class="" @click="handleClickInteractiveAnswer" :class="{'active':interactiveAnswer}">互动答题</button>
+        <div ref="courseLearningHeaderRef" class="course-learning-header" v-if="!assignmentOverlayActive">
+          <button :ref="setCourseLearningTabRef('content')" @click="handleClickContent" :class="{'active':content}">目录</button>
+          <button :ref="setCourseLearningTabRef('interactiveCourseware')" @click="handleClickInteractiveCourseware" :class="{'active':interactiveCourseware}">互动课件</button>
+          <button :ref="setCourseLearningTabRef('homework')" @click="handleClickHomework" :class="{'active':homework}">作业</button>
+          <button :ref="setCourseLearningTabRef('test')" @click="handleClickTest" :class="{'active':test}">测试</button>
+          <button :ref="setCourseLearningTabRef('data')" @click="handleClickData" :class="{'active':data}">资料</button>
+          <button :ref="setCourseLearningTabRef('tencentConference')" @click="handleClickTencentConference" :class="{'active':tencentConference}">腾讯会议</button>
+          <button :ref="setCourseLearningTabRef('givePublicNotice')" @click="handleClickGivePublicNotice" :class="{'active':givePublicNotice}">公告</button>
+          <button :ref="setCourseLearningTabRef('topic')" @click="handleClickTopic" :class="{'active':topic}">话题</button>
+          <button :ref="setCourseLearningTabRef('interactiveAnswer')" @click="handleClickInteractiveAnswer" :class="{'active':interactiveAnswer}">互动答题</button>
+          <button v-if="userStore.account?.identity==='老师'" :ref="setCourseLearningTabRef('members')" @click="handleClickMembers" :class="{'active':members}">成员</button>
+          <span class="course-learning-header__indicator" :style="courseLearningIndicatorStyle"></span>
         </div>
         <div class="course-details-blank" v-if="!assignmentOverlayActive && (content||interactiveCourseware||test||tencentConference||givePublicNotice||interactiveAnswer)">
           <img src="@/assets/课堂派课程详情空白页.png" alt="课堂派课程详情空白页">
@@ -1990,6 +2854,37 @@ async function deleteLink(linkItem) {
         </div>
         <div class="course-learning-body" v-if="data">
           <CourseMaterials :course-id="course.id || currentCourseId" :is-teacher-view="iTeach" />
+        </div>
+        <div class="course-learning-body" v-if="members && iTeach">
+          <div class="course-members-panel">
+            <div class="course-members-panel__header">
+              <div>
+                <div class="course-members-panel__title">课程成员</div>
+                <div class="course-members-panel__subtitle">共 {{ teacherMemberCount }} 名学生</div>
+              </div>
+              <button type="button" class="course-members-panel__refresh" @click="loadCourseMembers()">刷新</button>
+            </div>
+            <div class="course-members-table">
+              <div class="course-members-table__head">
+                <span>姓名</span>
+                <span>学号</span>
+                <span>账号</span>
+                <span>学校</span>
+                <span>班级</span>
+              </div>
+              <div v-if="courseMembersLoading" class="course-members-table__empty">成员加载中...</div>
+              <div v-else-if="!courseMembers.length" class="course-members-table__empty">当前课程还没有学生加入</div>
+              <div v-else>
+                <div v-for="member in courseMembers" :key="member.accountId" class="course-members-table__row">
+                  <span>{{ member.name || '-' }}</span>
+                  <span>{{ member.studentId || '-' }}</span>
+                  <span>{{ member.accountId || '-' }}</span>
+                  <span>{{ member.school || '-' }}</span>
+                  <span>{{ member.classes || '-' }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="course-learning-body" v-if="homework">
           <CourseAssignments
@@ -2041,6 +2936,7 @@ async function deleteLink(linkItem) {
             v-model:release-duplicate-threshold="releaseDuplicateThreshold"
             v-model:release-auto-return="releaseAutoReturn"
             v-model:release-ai-enabled="releaseAiEnabled"
+            :release-attachment-file="releaseAttachmentFile"
             :release-submit-button-text="releaseSubmitButtonText"
             :get-teacher-assignment-stage-text="getTeacherAssignmentStageText"
             :is-assignment-published="isAssignmentPublished"
@@ -2066,6 +2962,11 @@ async function deleteLink(linkItem) {
             :handle-delete-submitted-file="handleDeleteSubmittedFile"
             :handle-confirm-submit="handleConfirmSubmit"
             :download-submitted-file="downloadSubmittedFile"
+            :download-assignment-resource="downloadAssignmentResource"
+            :handle-release-attachment-change="handleReleaseAttachmentChange"
+            :remove-release-attachment="removeReleaseAttachment"
+            :handle-open-teacher-review="handleOpenTeacherReview"
+            :handle-remind-student="handleRemindStudent"
             :confirm-release-assignment="confirmReleaseAssignment"
             :from-release-back="fromReleaseBack"
             @submission-file-change="handleSubmissionFileChange"
@@ -2155,10 +3056,24 @@ async function deleteLink(linkItem) {
         <div v-for="group in (archivedCourseType === 'taught' ? taughtSemesterGroups : learnedSemesterGroups)" :key="group.name" class="semester-item">{{ group.name }}</div>
       </div>
       <div class="archive-courses-list">
+        <div class="archive-sort-tip">
+          <span>可直接拖动课程卡片调整顺序</span>
+          <span v-if="archiveSortSaving">保存中...</span>
+        </div>
         <div v-for="group in (archivedCourseType === 'taught' ? taughtSemesterGroups : learnedSemesterGroups)" :key="group.name" class="semester-courses-section">
           <div class="semester-header">{{ group.name }}</div>
           <div class="course-cards">
-            <div v-for="course in group.courses" :key="course.id" class="archived-course-card">
+            <div
+              v-for="course in group.courses"
+              :key="course.id"
+              class="archived-course-card"
+              :class="{ 'is-dragging': draggedArchivedCourseId === course.id }"
+              draggable="true"
+              @dragstart="handleArchivedCourseDragStart(course.id)"
+              @dragover="handleArchivedCourseDragOver"
+              @drop="handleArchivedCourseDrop(course.id)"
+              @dragend="handleArchivedCourseDragEnd"
+            >
               <div class="course-icon" :style="{ backgroundColor: archivedCourseType === 'taught' ? '#2563eb' : '#8b5cf6' }">
                 <span class="course-badge">{{ archivedCourseType === 'taught' ? '教' : '学' }}</span>
               </div>
@@ -2167,13 +3082,81 @@ async function deleteLink(linkItem) {
                 <div class="course-name">{{ course.name }}</div>
                 <div class="course-members">成员{{ course.number }}人</div>
               </div>
-              <div class="course-actions">
-                <button class="restore-btn" @click="unarchiveCourse(course.id)">恢复</button>
+              <div class="course-actions" @click.stop>
+                <button class="archive-course-more" @click="toggleArchivedCourseMenu($event, course.id)">⋮</button>
+                <div v-if="activeArchivedCourseMenuId === course.id" class="archive-course-menu">
+                  <button v-if="archivedCourseType === 'taught'" class="archive-course-menu__item" @click="handleArchivedCourseAction('finish', course)">结课</button>
+                  <button class="archive-course-menu__item" @click="handleArchivedCourseAction('delete', course)">删除</button>
+                  <button class="archive-course-menu__item" @click="handleArchivedCourseAction('restore', course)">恢复</button>
+                </div>
               </div>
             </div>
           </div>
         </div>
         <div v-if="(archivedCourseType === 'taught' ? taughtSemesterGroups : learnedSemesterGroups).length === 0" class="no-courses">暂无归档课程</div>
+      </div>
+    </div>
+  </div>
+</el-dialog>
+<el-dialog
+  v-model="teacherReviewDialogVisible"
+  title="在线批阅"
+  width="1180px"
+  destroy-on-close
+  append-to-body
+>
+  <div class="teacher-review-dialog">
+    <div class="teacher-review-dialog__preview">
+      <div class="teacher-review-dialog__meta">
+        <div>
+          <div class="teacher-review-dialog__title">{{ teacherReviewTarget?.studentName || teacherReviewTarget?.accountId || '学生作业' }}</div>
+          <div class="teacher-review-dialog__subtitle">
+            <span>{{ teacherReviewTarget?.fileName || '仅提交文本内容' }}</span>
+            <span v-if="teacherReviewTarget?.submittedAt">提交时间：{{ teacherReviewTarget.submittedAt }}</span>
+          </div>
+        </div>
+        <button
+          v-if="teacherReviewTarget?.fileName"
+          type="button"
+          class="teacher-review-dialog__download"
+          @click="downloadTeacherSubmissionFile(teacherReviewTarget)"
+        >
+          下载原文件
+        </button>
+      </div>
+      <div v-if="teacherReviewLoading" class="teacher-review-preview teacher-review-preview--empty">预览加载中...</div>
+      <div v-else class="teacher-review-preview">
+        <iframe v-if="teacherReviewPreviewType === 'pdf'" :src="teacherReviewPreviewUrl" class="teacher-review-preview__frame"></iframe>
+        <div v-else-if="teacherReviewPreviewType === 'image'" class="teacher-review-preview__image-wrap">
+          <img :src="teacherReviewPreviewUrl" alt="作业预览" class="teacher-review-preview__image">
+        </div>
+        <pre v-else-if="teacherReviewPreviewType === 'text'" class="teacher-review-preview__text">{{ teacherReviewPreviewText }}</pre>
+        <div v-else-if="teacherReviewPreviewType === 'docx'" class="teacher-review-preview__docx" v-html="teacherReviewPreviewHtml"></div>
+        <pre v-else-if="teacherReviewPreviewType === 'text-only'" class="teacher-review-preview__text">{{ teacherReviewPreviewText }}</pre>
+        <div v-else class="teacher-review-preview teacher-review-preview--empty">
+          {{ teacherReviewUnsupportedMessage || '当前暂无可预览内容，请下载原文件后查看。' }}
+        </div>
+      </div>
+    </div>
+    <div class="teacher-review-dialog__side">
+      <div class="teacher-review-dialog__score">
+        <label>评分</label>
+        <div class="teacher-review-dialog__score-input">
+          <input v-model="teacherReviewScore" type="number" min="0" :max="currentAssignmentDetail?.totalScore || 100">
+          <span>/ {{ currentAssignmentDetail?.totalScore || 100 }}</span>
+        </div>
+      </div>
+      <div class="teacher-review-dialog__comment">
+        <label>教师评语</label>
+        <textarea v-model="teacherReviewComment" placeholder="请输入批改意见、批注说明等内容"></textarea>
+      </div>
+      <div v-if="teacherReviewTarget?.submitContent" class="teacher-review-dialog__comment">
+        <label>学生留言</label>
+        <div class="teacher-review-dialog__student-message">{{ teacherReviewTarget.submitContent }}</div>
+      </div>
+      <div class="teacher-review-dialog__actions">
+        <button type="button" class="teacher-review-dialog__cancel" @click="teacherReviewDialogVisible = false">关闭</button>
+        <button type="button" class="teacher-review-dialog__save" @click="saveTeacherReview">保存批阅</button>
       </div>
     </div>
   </div>
@@ -2218,6 +3201,60 @@ async function deleteLink(linkItem) {
   line-height: 65px;
   padding: 0 2px;
 }
+.course-detail-topbar{
+  width:100%;
+  height:60px;
+  padding:0 22px 0 18px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  background:#fff;
+  box-shadow:0 1px 0 0 #dfdfdf;
+  position:fixed;
+  top:0;
+  left:0;
+  z-index:999;
+}
+.course-detail-topbar__left,
+.course-detail-topbar__right{
+  display:flex;
+  align-items:center;
+}
+.course-detail-topbar__left{
+  gap:14px;
+}
+.course-detail-topbar__right{
+  gap:10px;
+}
+.course-detail-topbar__menu{
+  width:36px;
+  height:36px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color:#303133;
+  font-size:24px;
+}
+.course-detail-topbar .top-nav-current,
+.course-detail-topbar .course-breadcrumb-current,
+.course-detail-topbar .course-breadcrumb-separator{
+  line-height:60px;
+}
+.course-detail-topbar .top-nav-current{
+  color:#303133;
+  font-size:16px;
+  font-weight:500;
+  padding:0;
+}
+.course-detail-topbar .course-breadcrumb-current{
+  font-size:16px;
+  color:#303133;
+}
+.course-detail-topbar .course-breadcrumb-separator{
+  margin:0 2px;
+  font-size:14px;
+  color:#c0c4cc;
+}
 .submit-button{
   border:none;
   height: 36px;
@@ -2250,20 +3287,37 @@ async function deleteLink(linkItem) {
   color:white;
 }
 .course-learning-header{
-display: flex;
+  position:relative;
+  display: flex;
   height:45px;
   align-items: center;
+  gap:25px;
+  padding-bottom:2px;
 }
 .course-learning-header button{
-  margin-right:25px;
+  position:relative;
+  margin-right:0;
+  padding-left:0;
+  padding-right:0;
   padding-bottom:10px;
   padding-top:10px;
   font-size:14px;
+  color:#303133;
+  transition:color .25s ease;
 }
 .course-learning-header button.active{
   font-size:14px;
   color: #4285f4;
-  border-bottom: 2px solid #4285f4;
+}
+.course-learning-header__indicator{
+  position:absolute;
+  left:0;
+  bottom:0;
+  height:2px;
+  background:#4285f4;
+  border-radius:999px;
+  transition:transform .28s ease, width .28s ease, opacity .2s ease;
+  pointer-events:none;
 }
 .course-details-header-content button.active{
   background: #e8f0ff;
@@ -2308,22 +3362,92 @@ display: flex;
 }
 .course-details-header{
   width:100%;
-  height:220px;
+  min-height:250px;
   border-radius:8px;
   box-shadow: 0 2px 4px 0 rgba(0, 0, 0, .1);
+  overflow:hidden;
 }
-.course-details-header-title{
+.course-details-hero{
+  min-height:186px;
+  padding:28px 24px 18px;
   display:flex;
-  height:170px;
-  background-color:red;
-  background-image: url('@/assets/课堂派课程详情图片.png');
+  align-items:stretch;
+  background-size:cover;
+  background-position:center;
   border-top-left-radius:8px;
   border-top-right-radius:8px;
 }
+.course-details-hero__content{
+  width:100%;
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:24px;
+}
+.course-details-hero__summary{
+  display:flex;
+  flex-direction:column;
+  justify-content:space-between;
+  min-height:140px;
+  color:#fff;
+}
+.course-details-hero__title{
+  font-size:22px;
+  line-height:1.35;
+  font-weight:600;
+  text-shadow:0 1px 2px rgba(0,0,0,.16);
+}
+.course-details-hero__class{
+  margin-top:6px;
+  font-size:14px;
+  color:rgba(255,255,255,.92);
+}
+.course-details-hero__meta{
+  margin-top:auto;
+  display:flex;
+  align-items:center;
+  gap:20px;
+  flex-wrap:wrap;
+  font-size:14px;
+  color:rgba(255,255,255,.95);
+}
+.course-details-hero__actions{
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+.course-skin-btn{
+  height:34px;
+  padding:0 16px;
+  border-radius:17px;
+  color:#3a4a5f;
+  background:rgba(255,255,255,.92);
+  font-size:13px;
+  transition:all .2s ease;
+}
+.course-skin-btn:hover{
+  background:#fff;
+}
+.course-skin-btn.is-secondary{
+  background:rgba(255,255,255,.18);
+  color:#fff;
+  border:1px solid rgba(255,255,255,.38);
+}
+.course-skin-btn.is-secondary:hover{
+  background:rgba(255,255,255,.26);
+}
 .course-details-header-content{
   display:flex;
+  min-height:64px;
+  padding:0 18px;
+  gap:8px;
+  align-items:center;
+  background:#fff;
   border-bottom-left-radius:8px;
   border-bottom-right-radius:8px;
+}
+.student-hidden-file-input{
+  display:none;
 }
 
 .new-row {
@@ -2447,39 +3571,46 @@ display: flex;
   float:right;
 }
 .course-dropdown-content{
-  display:none;
   position:absolute;
+  top:calc(100% + 4px);
+  left:0;
   background-color:white;
-  width:90px;
+  width:100%;
   box-shadow:0 8px 16px 0 rgba(0,0,0,0.2);
+  z-index:20;
 }
 .course-dropdown-content button{
   color:black;
   padding:0 17px;
   display:block;
-  width:90px;
-  height:30px;
+  width:100%;
+  height:36px;
   cursor: pointer;
+}
+.course-dropdown-content :deep(.el-button){
+  margin:0;
+  border:none;
+  border-radius:0;
+  justify-content:flex-start;
+  text-align:left;
+  padding-left:17px;
+  padding-right:17px;
 }
 .course-dropdown-content button:hover{
   background-color:rgb(236, 243, 254);
   color:rgb(66, 133, 244);
 }
-.course-dropdown:hover .course-dropdown-content{
-  display:block;
-}
 .teach-div,.learn-div{
  font-size:12px;
+ display:flex;
+ width:100%;
+ justify-content: space-between;
+ align-items:center;
+ line-height:1;
 }
 .teach-div{
-  display:flex;
-  width:100%;
-  justify-content: space-between;
 }
 .learn-div{
-  display:flex;
-  width:100%;
-  justify-content: space-between;
 }
 .learn-span{
   color:rgb(66, 133, 244);
@@ -2501,39 +3632,100 @@ display: flex;
   display:flex;
   padding:0 10px 15px 10px;
   justify-content: space-between;
+  align-items:center;
   color:rgb(60, 64, 67);
   font-size:12px;
+}
+.course-information-footer .learn-div > div,
+.course-information-footer .teach-div > div{
+  display:flex;
+  align-items:center;
+  line-height:1;
+}
+.course-information-footer .learn-div span,
+.course-information-footer .teach-div span{
+  font-size:12px;
+  line-height:1;
+}
+.top-placement{
+  display:inline-flex;
+  align-items:center;
+  height:20px;
+  line-height:1;
 }
 .cancel-top-placement{
   border:none;
   font-size:12px;
 }
 .course-information-header{
-  color:white;
   display:flex;
   align-items: flex-start;
   flex-direction: column;
-  gap:10px;
-}
-.course-time{
-  opacity:0.6;
-}
-.course-time,.course-classes{
-  font-size:12px;
-}
-.course-name{
-  font-size:18px;
-}
-.course-code{
-  font-size:14px;
+  justify-content:space-between;
+  gap:8px;
+  overflow:hidden;
 }
 .course-information-header{
   height:152px;
   padding:15px 20px;
   background-color:rgb(160, 62, 59);
-  background-image: url('@/assets/课堂派课程详情图片.png');
+  background-size:cover;
+  background-position:center;
   border-top-left-radius: 8px;
   border-top-right-radius: 8px;
+}
+.course-information-header .course-time{
+  width:100%;
+  color:rgba(255,255,255,.72);
+  font-size:12px;
+  line-height:1.3;
+  white-space:normal;
+  word-break:break-word;
+}
+.course-information-header .course-name{
+  width:100%;
+  color:#fff;
+  font-size:18px;
+  line-height:1.35;
+  font-weight:600;
+  white-space:normal;
+  word-break:break-word;
+}
+.course-information-header .course-classes{
+  width:100%;
+  color:rgba(255,255,255,.9);
+  font-size:12px;
+  line-height:1.35;
+  white-space:normal;
+  word-break:break-word;
+}
+.course-information-header .course-code{
+  width:100%;
+  margin-top:auto;
+  color:#fff;
+  font-size:14px;
+  line-height:1.35;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  white-space:normal;
+  word-break:break-word;
+  overflow:hidden;
+}
+.course-information-header .course-code-icon{
+  width:16px;
+  height:16px;
+  flex-shrink:0;
+  display:block;
+  object-fit:contain;
+  opacity:.98;
+}
+.course-information-header .course-code-text{
+  flex:1;
+  min-width:0;
+  color:#fff;
+  white-space:normal;
+  word-break:break-all;
 }
 .course-container{
   margin-top: 20px; /* 仅保留顶部间距 */
@@ -2544,13 +3736,43 @@ display: flex;
   border:1px solid rgb(226, 230, 237);
 }
 
-.bottom-course-container-body,.top-course-container-body{
+.bottom-course-container-body{
   display:flex;
   flex-direction:row;
   flex-wrap: wrap; /* 核心：超出一行自动换行 */
   gap: 20px; /* 用gap统一控制课程间距（替代margin-right） */
   padding: 10px;
   box-sizing: border-box;
+}
+.top-course-container-body{
+  display:grid;
+  grid-template-columns:repeat(4, 224px);
+  gap: 20px;
+  padding: 10px 10px 14px;
+  box-sizing: border-box;
+  max-height: 360px;
+  overflow-x:hidden;
+  overflow-y:auto;
+  align-content:flex-start;
+  justify-content:space-between;
+  scrollbar-width: thin;
+  scrollbar-color: #c7ccd4 transparent;
+}
+.top-course-container-body .course-container{
+  margin-top:0;
+}
+.top-course-container-body::-webkit-scrollbar{
+  width:10px;
+}
+.top-course-container-body::-webkit-scrollbar-track{
+  background:transparent;
+}
+.top-course-container-body::-webkit-scrollbar-thumb{
+  background:#c7ccd4;
+  border-radius:999px;
+}
+.top-course-container-body::-webkit-scrollbar-thumb:hover{
+  background:#adb5c0;
 }
 .bottom-course-container button{
   font-size:14px;
@@ -2570,18 +3792,50 @@ display: flex;
   align-items: center;
 }
 .search input{
+  flex:1;
+  min-width:0;
   border:none;
-  color:rgb(218, 220, 224);
+  background:transparent;
+  color:#8b95a7;
+  font-size:14px;
+  font-weight:500;
   outline:none;
 }
+.search input::placeholder{
+  color:#c4cad4;
+}
 .nav .search-focused {
-  border: 1px solid rgb(66, 133, 244);
+  border: 2px solid #4a90ff;
+  box-shadow: 0 0 0 2px rgba(74, 144, 255, 0.12);
 }
-.search button{
-  color:rgb(218, 220, 224);
+.search-icon-btn{
+  width:26px;
+  height:26px;
+  flex-shrink:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color:#b9c0cc;
 }
-::placeholder{
-  color:rgb(218, 220, 224);
+.search-icon{
+  position:relative;
+  width:12px;
+  height:12px;
+  border:2px solid currentColor;
+  border-radius:50%;
+  box-sizing:border-box;
+}
+.search-icon::after{
+  content:'';
+  position:absolute;
+  right:-5px;
+  bottom:-3px;
+  width:7px;
+  height:2px;
+  background:currentColor;
+  border-radius:999px;
+  transform:rotate(45deg);
+  transform-origin:center;
 }
 .nav{
   display: flex;
@@ -2589,36 +3843,44 @@ display: flex;
   align-items: center;
 }
 .search{
-  width:205px;
-  height:36px;
+  width:238px;
+  height:38px;
   display:flex;
   justify-content: space-between;
-  padding:10px;
-  border:1px solid rgb(218, 220, 224);
+  padding:0 10px 0 15px;
+  border:2px solid #c9cfd8;
   align-items:center;
-  border-radius:18px;
-}
-.teach-button{
-  padding-right:20px;
+  border-radius:19px;
+  background:#fff;
+  box-sizing:border-box;
 }
 .teach-learn{
   display:flex;
   align-items: center;
-}
-.learn-button{
-  padding-left:20px;
+  gap:28px;
 }
 .teach-learn button{
-  border-bottom:2px solid rgb(232, 240, 255);
+  position:relative;
+  border-bottom:none;
   background-color: transparent;
   color:#303133;
   font-size:16px;
-  padding-bottom:10px;
+  padding:10px 0 12px;
   padding-top:10px;
+  transition:color .2s ease;
 }
-.teach-learn button:focus{
-  border-bottom:2px solid rgb(66, 133, 244);
+.teach-learn button.active{
   color:rgb(66, 133, 244);
+}
+.teach-learn button.active::after{
+  content:'';
+  position:absolute;
+  left:0;
+  right:0;
+  bottom:0;
+  height:2px;
+  background:rgb(66, 133, 244);
+  border-radius:999px;
 }
 .top-course-container-header {
   display: flex;
@@ -2629,11 +3891,17 @@ display: flex;
 .create-join-course{
   border:none;
   height: 36px;
+  padding:0 20px;
   font-size:14px;
   color:white;
   background-color:rgb(66, 133, 244);
   cursor:pointer;
   border-radius:4px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  white-space:nowrap;
+  box-sizing:border-box;
 }
 .create-join-course:hover{
   background-color:rgb(104, 157, 246);
@@ -2863,19 +4131,73 @@ button {
 .semester-item{padding:12px 16px;cursor:pointer;font-size:14px;color:#374151;border-radius:6px;margin-bottom:8px;transition:background .2s}
 .semester-item:hover{background:#f3f4f6}
 .archive-courses-list{flex:1}
+.archive-sort-tip{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;color:#6b7280;font-size:12px}
 .semester-courses-section{margin-bottom:24px}
 .semester-header{font-size:16px;font-weight:600;color:#111827;margin-bottom:12px}
 .course-cards{display:flex;flex-direction:column;gap:12px}
 .archived-course-card{display:flex;align-items:center;gap:16px;padding:16px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;transition:box-shadow .2s}
 .archived-course-card:hover{box-shadow:0 4px 12px rgba(0,0,0,.05)}
+.archived-course-card.is-dragging{opacity:.55;border-color:#60a5fa;background:#f8fbff}
 .course-icon{width:60px;height:60px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .course-badge{background:rgba(255,255,255,.9);color:#6b21a8;padding:4px 8px;border-radius:4px;font-size:12px;font-weight:600}
 .course-info{flex:1}
 .course-id{font-size:12px;color:#6b7280;margin-bottom:4px}
 .course-name{font-size:16px;font-weight:600;color:#111827;margin-bottom:4px}
 .course-members{font-size:12px;color:#6b7280}
-.course-actions{display:flex;align-items:center;gap:12px}
-.restore-btn{background:#2563eb;color:#fff;border:none;padding:8px 16px;border-radius:6px;font-size:14px;cursor:pointer;transition:background .2s}
-.restore-btn:hover{background:#1d4ed8}
+.course-actions{position:relative;display:flex;align-items:flex-start;justify-content:flex-end;gap:12px}
+.archive-course-more{width:30px;height:30px;border:none;border-radius:50%;background:transparent;color:#6b7280;font-size:22px;line-height:1}
+.archive-course-more:hover{background:#f3f4f6;color:#374151}
+.archive-course-menu{position:absolute;top:34px;right:0;min-width:108px;padding:6px 0;border:1px solid #e5e7eb;border-radius:8px;background:#fff;box-shadow:0 10px 24px rgba(15,23,42,.12);z-index:20}
+.archive-course-menu__item{display:block;width:100%;height:34px;padding:0 14px;text-align:left;color:#374151;font-size:13px;background:#fff}
+.archive-course-menu__item:hover{background:#f9fafb;color:#111827}
 .no-courses{text-align:center;color:#9ca3af;padding:40px;font-size:14px}
+.prep-topbar__notification{position:relative;display:flex;align-items:center}
+.prep-topbar__bell{position:relative}
+.prep-topbar__bell-badge{position:absolute;top:-6px;right:-10px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:#f56c6c;color:#fff;font-size:11px;line-height:18px;text-align:center}
+.notification-panel{position:absolute;top:42px;right:-18px;width:360px;max-height:460px;padding:12px 0;background:#fff;border:1px solid #e5e7eb;border-radius:12px;box-shadow:0 12px 30px rgba(15,23,42,.15);z-index:1200;overflow:hidden}
+.notification-panel__header{display:flex;align-items:center;justify-content:space-between;padding:0 16px 10px;border-bottom:1px solid #edf2f7;font-size:15px;color:#1f2937;font-weight:600}
+.notification-panel__action{font-size:12px;color:#409eff}
+.notification-panel__list{max-height:396px;overflow:auto}
+.notification-panel__item{width:100%;padding:12px 16px;text-align:left;border-bottom:1px solid #f3f4f6;background:#fff}
+.notification-panel__item:last-child{border-bottom:none}
+.notification-panel__item.unread{background:#f7fbff}
+.notification-panel__item-top{display:flex;justify-content:space-between;gap:12px;margin-bottom:6px}
+.notification-panel__title{font-size:14px;color:#1f2937;font-weight:600}
+.notification-panel__time{font-size:11px;color:#9ca3af;white-space:nowrap}
+.notification-panel__content{font-size:12px;line-height:1.7;color:#4b5563}
+.notification-panel__empty{padding:28px 16px;text-align:center;color:#9ca3af;font-size:13px}
+.course-members-panel{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:18px 20px}
+.course-members-panel__header{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.course-members-panel__title{font-size:20px;color:#111827;font-weight:600}
+.course-members-panel__subtitle{margin-top:6px;font-size:12px;color:#6b7280}
+.course-members-panel__refresh{height:32px;padding:0 14px;border:1px solid #d1d5db;border-radius:6px;background:#fff;color:#374151}
+.course-members-table{border:1px solid #ebeef5;border-radius:10px;overflow:hidden}
+.course-members-table__head,.course-members-table__row{display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:12px;align-items:center;padding:14px 16px}
+.course-members-table__head{background:#f9fafb;color:#6b7280;font-size:12px}
+.course-members-table__row{border-top:1px solid #f3f4f6;color:#1f2937;font-size:13px}
+.course-members-table__empty{padding:36px 16px;text-align:center;color:#9ca3af;font-size:13px}
+.teacher-review-dialog{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:18px;min-height:620px}
+.teacher-review-dialog__preview,.teacher-review-dialog__side{border:1px solid #ebeef5;border-radius:10px;background:#fff}
+.teacher-review-dialog__preview{display:flex;flex-direction:column;overflow:hidden}
+.teacher-review-dialog__meta{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 18px;border-bottom:1px solid #f3f4f6}
+.teacher-review-dialog__title{font-size:18px;color:#111827;font-weight:600}
+.teacher-review-dialog__subtitle{display:flex;flex-direction:column;gap:4px;margin-top:6px;font-size:12px;color:#6b7280}
+.teacher-review-dialog__download{height:32px;padding:0 14px;border:1px solid #dbeafe;border-radius:6px;background:#eff6ff;color:#2563eb;flex-shrink:0}
+.teacher-review-preview{flex:1;min-height:540px;background:#f8fafc}
+.teacher-review-preview--empty{display:flex;align-items:center;justify-content:center;padding:24px;color:#9ca3af;font-size:14px}
+.teacher-review-preview__frame{width:100%;height:540px;border:none;background:#fff}
+.teacher-review-preview__image-wrap{display:flex;align-items:flex-start;justify-content:center;height:540px;padding:20px;overflow:auto}
+.teacher-review-preview__image{max-width:100%;height:auto;box-shadow:0 4px 12px rgba(15,23,42,.08)}
+.teacher-review-preview__text{height:540px;margin:0;padding:20px;overflow:auto;white-space:pre-wrap;word-break:break-word;font-size:13px;line-height:1.8;color:#1f2937;background:#fff}
+.teacher-review-preview__docx{height:540px;padding:24px;overflow:auto;background:#fff;color:#1f2937;line-height:1.8}
+.teacher-review-dialog__side{display:flex;flex-direction:column;gap:18px;padding:18px}
+.teacher-review-dialog__score label,.teacher-review-dialog__comment label{display:block;margin-bottom:10px;font-size:14px;color:#374151;font-weight:600}
+.teacher-review-dialog__score-input{display:flex;align-items:center;gap:8px}
+.teacher-review-dialog__score-input input{width:120px;height:38px;padding:0 12px;border:1px solid #d1d5db;border-radius:8px;outline:none}
+.teacher-review-dialog__comment textarea{width:100%;min-height:180px;padding:12px 14px;border:1px solid #d1d5db;border-radius:10px;resize:vertical;box-sizing:border-box;outline:none}
+.teacher-review-dialog__student-message{padding:12px 14px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb;font-size:13px;line-height:1.7;color:#374151;white-space:pre-wrap}
+.teacher-review-dialog__actions{display:flex;justify-content:flex-end;gap:12px;margin-top:auto}
+.teacher-review-dialog__cancel,.teacher-review-dialog__save{height:34px;padding:0 18px;border-radius:6px}
+.teacher-review-dialog__cancel{border:1px solid #d1d5db;background:#fff;color:#4b5563}
+.teacher-review-dialog__save{background:#409eff;color:#fff}
 </style>
