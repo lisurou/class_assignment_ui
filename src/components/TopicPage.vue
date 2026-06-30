@@ -42,6 +42,7 @@ const fetchTopics = async () => {
 };
 
 const handleCreateTopic = () => {
+  currentTopic.value = null;
   showCreateDialog.value = true;
 };
 

@@ -1,8 +1,10 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, computed, watch, nextTick } from 'vue';
 import { useUserStore } from '@/stores/userStore';
 import { ElMessage } from 'element-plus';
 import axios from 'axios';
+import { QuillEditor } from '@vueup/vue-quill';
+import '@vueup/vue-quill/dist/vue-quill.snow.css';
 
 const props = defineProps({
   courseId: String,
@@ -17,6 +19,7 @@ const content = ref('');
 const isAnonymous = ref(false);
 const loading = ref(false);
 const isEditMode = ref(false);
+const quillRef = ref(null);
 
 const titleCharCount = computed(() => title.value.length);
 
@@ -34,7 +37,7 @@ const handleSubmit = async () => {
     ElMessage.warning('请输入话题标题');
     return;
   }
-  if (!content.value.trim()) {
+  if (!content.value.trim() || content.value === '<p><br></p>') {
     ElMessage.warning('请输入话题内容');
     return;
   }
@@ -110,96 +113,28 @@ const handleClose = () => {
           </div>
         </div>
 
-        <!-- 编辑器工具栏 -->
-        <div class="editor-toolbar">
-          <div class="toolbar-group">
-            <button class="toolbar-btn" title="清除格式">
-              <span>T</span>
-            </button>
-            <button class="toolbar-btn" title="字体颜色">
-              <span>A</span>
-            </button>
-            <button class="toolbar-btn" title="背景颜色">
-              <span>A</span>
-            </button>
-          </div>
-          <div class="toolbar-divider"></div>
-          <div class="toolbar-group">
-            <button class="toolbar-btn" title="加粗">
-              <span class="bold-text">B</span>
-            </button>
-            <button class="toolbar-btn" title="斜体">
-              <span class="italic-text">I</span>
-            </button>
-            <button class="toolbar-btn" title="下划线">
-              <span class="underline-text">U</span>
-            </button>
-          </div>
-          <div class="toolbar-divider"></div>
-          <div class="toolbar-group">
-            <button class="toolbar-btn" title="代码">
-              <span>{}</span>
-            </button>
-            <button class="toolbar-btn" title="全屏">
-              <span>⛶</span>
-            </button>
-          </div>
-        </div>
-
-        <!-- 内容编辑区 -->
+        <!-- 内容编辑区 - 使用 Quill 编辑器（启用默认工具栏） -->
         <div class="form-group">
           <div class="editor-container">
-            <textarea 
-              v-model="content" 
-              placeholder="请输入话题内容" 
-              rows="12"
-              class="content-editor"
-            ></textarea>
-          </div>
-        </div>
-
-        <!-- 底部工具栏 -->
-        <div class="editor-footer">
-          <div class="footer-left">
-            <button class="footer-btn" title="左对齐">
-              <span>≡</span>
-            </button>
-            <button class="footer-btn" title="居中">
-              <span>≡</span>
-            </button>
-            <button class="footer-btn" title="右对齐">
-              <span>≡</span>
-            </button>
-          </div>
-          <div class="footer-divider"></div>
-          <div class="footer-group">
-            <button class="footer-btn" title="标题">
-              <span>H2</span>
-            </button>
-            <button class="footer-btn" title="标题3">
-              <span>H3</span>
-            </button>
-          </div>
-          <div class="footer-divider"></div>
-          <div class="footer-group">
-            <button class="footer-btn" title="引用">
-              <span>❝</span>
-            </button>
-            <button class="footer-btn" title="分割线">
-              <span>—</span>
-            </button>
-          </div>
-          <div class="footer-divider"></div>
-          <div class="footer-group">
-            <button class="footer-btn" title="插入图片">
-              <span>🖼</span>
-            </button>
-            <button class="footer-btn" title="附件">
-              <span>📎 附件</span>
-            </button>
-            <button class="footer-btn" title="公式">
-              <span>∑ 公式</span>
-            </button>
+            <QuillEditor 
+              ref="quillRef"
+              v-model:content="content"
+              content-type="html"
+              :options="{
+                theme: 'snow',
+                modules: {
+                  toolbar: [
+                    ['bold', 'italic', 'underline', 'strike'],
+                    ['code-block', 'blockquote'],
+                    [{ 'header': 2 }, { 'header': 3 }],
+                    [{ 'align': [] }],
+                    ['clean']
+                  ]
+                },
+                placeholder: '请输入话题内容...'
+              }"
+              style="min-height: 350px;"
+            />
           </div>
         </div>
       </div>
@@ -333,140 +268,11 @@ const handleClose = () => {
   margin-left: 10px;
 }
 
-/* 编辑器工具栏 */
-.editor-toolbar {
-  display: flex;
-  align-items: center;
-  padding: 8px 12px;
-  background-color: #f5f7fa;
-  border: 1px solid #dcdfe6;
-  border-bottom: none;
-  border-radius: 4px 4px 0 0;
-  gap: 5px;
-  flex-wrap: wrap;
-}
-
-.toolbar-group {
-  display: flex;
-  gap: 2px;
-}
-
-.toolbar-btn {
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: none;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 14px;
-  color: #606266;
-}
-
-.toolbar-btn:hover {
-  background-color: #e9ecef;
-  border-color: #dcdfe6;
-}
-
-.toolbar-divider {
-  width: 1px;
-  height: 24px;
-  background-color: #dcdfe6;
-  margin: 0 5px;
-}
-
-.bold-text {
-  font-weight: bold;
-}
-
-.italic-text {
-  font-style: italic;
-}
-
-.underline-text {
-  text-decoration: underline;
-}
-
 /* 内容编辑区 */
 .editor-container {
   border: 1px solid #dcdfe6;
-  border-top: none;
-  border-radius: 0 0 4px 4px;
-}
-
-.content-editor {
-  width: 100%;
-  min-height: 350px;
-  padding: 15px;
-  border: none;
-  font-size: 14px;
-  color: #303133;
-  box-sizing: border-box;
-  resize: vertical;
-  outline: none;
-  font-family: inherit;
-  line-height: 1.6;
-}
-
-.content-editor::placeholder {
-  color: #c0c4cc;
-}
-
-/* 底部工具栏 */
-.editor-footer {
-  display: flex;
-  align-items: center;
-  padding: 8px 12px;
-  background-color: #f5f7fa;
-  border: 1px solid #dcdfe6;
-  border-top: none;
-  border-radius: 0 0 4px 4px;
-  gap: 5px;
-  flex-wrap: wrap;
-}
-
-.footer-left {
-  display: flex;
-  gap: 2px;
-}
-
-.footer-group {
-  display: flex;
-  gap: 2px;
-}
-
-.footer-divider {
-  width: 1px;
-  height: 24px;
-  background-color: #dcdfe6;
-  margin: 0 5px;
-}
-
-.footer-btn {
-  height: 32px;
-  padding: 0 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: none;
-  border: 1px solid transparent;
   border-radius: 4px;
-  cursor: pointer;
-  font-size: 13px;
-  color: #606266;
-  white-space: nowrap;
-}
-
-.footer-btn:hover {
-  background-color: #e9ecef;
-  border-color: #dcdfe6;
-}
-
-.footer-left .footer-btn {
-  width: 32px;
-  padding: 0;
+  background: white;
 }
 
 /* 对话框底部 */
@@ -485,6 +291,7 @@ const handleClose = () => {
   font-size: 14px;
   cursor: pointer;
   border: none;
+  transition: all 0.15s ease;
 }
 
 .btn-cancel {
@@ -509,5 +316,74 @@ const handleClose = () => {
 .btn-submit:disabled {
   background-color: #a0cfff;
   cursor: not-allowed;
+}
+
+/* Quill 编辑器样式覆盖 */
+:deep(.ql-container) {
+  border: none !important;
+  font-size: 14px;
+}
+
+:deep(.ql-toolbar) {
+  border: none !important;
+  border-bottom: 1px solid #dcdfe6 !important;
+  background-color: #f5f7fa;
+}
+
+:deep(.ql-editor) {
+  min-height: 350px;
+  padding: 15px;
+}
+
+:deep(.ql-editor.ql-blank::before) {
+  color: #c0c4cc;
+  font-style: normal;
+}
+
+/* ========== 关键修复：强制显示格式化文字 ========== */
+:deep(.ql-editor strong) {
+  font-weight: 700 !important;
+  color: inherit;
+}
+
+:deep(.ql-editor b) {
+  font-weight: 700 !important;
+  color: inherit;
+}
+
+:deep(.ql-editor em) {
+  font-style: italic !important;
+  color: inherit;
+}
+
+:deep(.ql-editor i) {
+  font-style: italic !important;
+  color: inherit;
+}
+
+:deep(.ql-editor u) {
+  text-decoration: underline !important;
+  color: inherit;
+}
+
+:deep(.ql-editor s) {
+  text-decoration: line-through !important;
+  color: inherit;
+}
+
+:deep(.ql-editor code) {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  background-color: rgba(0, 0, 0, 0.06);
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+:deep(.ql-editor blockquote) {
+  border-left: 4px solid #409eff;
+  padding-left: 16px;
+  margin-left: 0;
+  color: #606266;
+  font-style: italic;
 }
 </style>
