@@ -1,11 +1,11 @@
- <script setup>
+<script setup>
 import axios from 'axios';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useUserStore } from '@/stores/userStore';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import logoBlue from '@/assets/logo_blue.png';
-import avatarImage from '@/assets/课堂派头像.jpg';
+import defaultAvatarImage from '@/assets/课堂派头像.jpg';
 
 const API_BASE = 'http://localhost:8080';
 const DEBUG_IMPORT_CONFLICT_URL = 'http://127.0.0.1:7777/event';
@@ -30,6 +30,7 @@ function reportImportConflictDebug(hypothesisId, location, msg, data = {}, runId
 const router = useRouter();
 const route = useRoute();
 const userStore = useUserStore();
+const userAvatarSrc = computed(() => userStore.account?.avatarUrl || defaultAvatarImage);
 
 const topMenus = [
   { key: 'course', label: '我的课堂' },
@@ -132,6 +133,8 @@ const importCourseKeyword = ref('');
 
 const userMenuOpen = ref(false);
 const userMenuRef = ref(null);
+const spaceActionMenuId = ref('');
+const deletingSpaceId = ref('');
 
 const membersLoading = ref(false);
 const logsLoading = ref(false);
@@ -466,7 +469,8 @@ function normalizeSpace(item) {
   const isGroup = Boolean(item?.isGroup ?? item?.group ?? item?.team ?? item?.is_team ?? normalizedGroup === '小组');
   const group = normalizedGroup || (isGroup ? '小组' : '个人');
   const tag = group === '小组' ? '小组' : group === '个人' ? '个人' : '全部';
-  return { id, name, group, tag, raw: item };
+  const ownerId = String(item?.ownerId ?? item?.owner_id ?? item?.creatorId ?? item?.creator_id ?? item?.createdBy ?? item?.created_by ?? '');
+  return { id, name, group, tag, ownerId, raw: item };
 }
 
 function normalizeId(value) {
@@ -1443,9 +1447,43 @@ function closeUserMenu() {
   userMenuOpen.value = false;
 }
 
+function closeSpaceActionMenu() {
+  spaceActionMenuId.value = '';
+}
+
+function toggleSpaceActionMenu(spaceId) {
+  const id = String(spaceId || '');
+  spaceActionMenuId.value = spaceActionMenuId.value === id ? '' : id;
+}
+
+function resolveSpaceOwnerId(item) {
+  if (!item) return '';
+  return String(
+    item.ownerId
+    || item.raw?.ownerId
+    || item.raw?.owner_id
+    || currentSpaceDetail.value?.ownerId
+    || currentSpaceDetail.value?.owner_id
+    || ''
+  );
+}
+
+function isSpaceOwner(item) {
+  const accountId = getAccountId();
+  const ownerId = resolveSpaceOwnerId(item);
+  return Boolean(accountId) && Boolean(ownerId) && accountId === ownerId;
+}
+
 function handleDocumentClick(event) {
   if (!userMenuRef.value?.contains(event.target)) {
     closeUserMenu();
+  }
+  const target = event?.target;
+  const inMoreWrap = target && typeof target.closest === 'function'
+    ? target.closest('.prep-sidebar__more-wrap')
+    : null;
+  if (!inMoreWrap) {
+    closeSpaceActionMenu();
   }
 }
 
@@ -1597,6 +1635,102 @@ async function createPrepSpace() {
     ElMessage.error(friendlyMessage);
   } finally {
     createPrepSpaceSubmitting.value = false;
+  }
+}
+
+async function deletePrepSpace(item) {
+  const spaceId = String(item?.id || '');
+  const accountId = getAccountId();
+  if (!spaceId || !accountId) {
+    ElMessage.error('未获取到当前备课区或账号信息');
+    return;
+  }
+  if (!isSpaceOwner(item)) {
+    ElMessage.warning('仅创建者可删除备课区');
+    return;
+  }
+  closeSpaceActionMenu();
+  let confirmed = false;
+  try {
+    await ElMessageBox.confirm(
+      `删除“${item?.name || '当前备课区'}”后，关联成员、资料、作业、话题和文件都会一起清理，确定继续吗？`,
+      '删除备课区',
+      {
+        type: 'warning',
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        distinguishCancelAndClose: true
+      }
+    );
+    confirmed = true;
+  } catch (action) {
+    if (action === 'cancel' || action === 'close') {
+      return;
+    }
+    ElMessage.error('删除确认弹窗打开失败');
+    return;
+  }
+
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    deletingSpaceId.value = spaceId;
+    closeSpaceActionMenu();
+    const response = await axios.delete(`${API_BASE}/prepare-spaces/${encodeURIComponent(spaceId)}`, {
+      params: { accountId }
+    });
+    const data = response?.data ?? {};
+    if (data?.success === false) {
+      throw new Error(data?.message || '删除备课区失败');
+    }
+
+    const deletingCurrent = String(selectedSpaceId.value || '') === spaceId || String(route.params?.spaceId || '') === spaceId;
+    const nextSpaces = (Array.isArray(prepSpaces.value) ? prepSpaces.value : []).filter((space) => String(space?.id) !== spaceId);
+    prepSpaces.value = nextSpaces;
+    ElMessage.success(data?.message || '删除备课区成功');
+
+    if (!deletingCurrent) {
+      try {
+        await fetchPrepSpaces();
+        prepSpaces.value = (Array.isArray(prepSpaces.value) ? prepSpaces.value : []).filter((space) => String(space?.id) !== spaceId);
+        if ((Array.isArray(prepSpaces.value) ? prepSpaces.value : []).some((space) => String(space?.id) === spaceId)) {
+          window.location.reload();
+        }
+      } catch {
+        return;
+      }
+      return;
+    }
+
+    const nextSpace = nextSpaces[0] || null;
+    if (!nextSpace?.id) {
+      selectedSpaceId.value = '';
+      currentSpaceDetail.value = null;
+      spaceMembers.value = [];
+      spaceLogs.value = [];
+      resetTabData();
+      await router.replace({ path: '/lesson-prep', query: { ...route.query } });
+      return;
+    }
+
+    selectedSpaceId.value = nextSpace.id;
+    await router.replace({ path: buildSpaceBasePath(nextSpace.id), query: { ...route.query } });
+    try {
+      await fetchPrepSpaces();
+      prepSpaces.value = (Array.isArray(prepSpaces.value) ? prepSpaces.value : []).filter((space) => String(space?.id) !== spaceId);
+      if ((Array.isArray(prepSpaces.value) ? prepSpaces.value : []).some((space) => String(space?.id) === spaceId)) {
+        window.location.replace(buildSpaceBasePath(nextSpace.id));
+      }
+    } catch {
+      return;
+    }
+  } catch (e) {
+    console.error('删除备课区失败：', e);
+    ElMessage.error(e?.response?.data?.message || e?.message || '删除备课区失败');
+  } finally {
+    deletingSpaceId.value = '';
   }
 }
 
@@ -2810,7 +2944,8 @@ async function fetchPrepSpaces() {
   try {
     const response = await axios.get(`${API_BASE}/prepare-spaces`, {
       params: {
-        accountId: userStore.account?.accountId
+        accountId: userStore.account?.accountId,
+        _t: Date.now()
       }
     });
     const list = parseListResponse(response.data);
@@ -2830,7 +2965,8 @@ async function fetchSpaceDetail(spaceId) {
   try {
     const response = await axios.get(`${API_BASE}/prepare-spaces/${encodeURIComponent(spaceId)}`, {
       params: {
-        accountId: userStore.account?.accountId
+        accountId: userStore.account?.accountId,
+        _t: Date.now()
       }
     });
     const payload = response?.data ?? null;
@@ -3004,7 +3140,7 @@ onBeforeUnmount(() => {
         <button type="button" class="prep-topbar__bell">🔔</button>
         <div ref="userMenuRef" class="dropdown prep-topbar__user-menu">
           <button type="button" class="prep-topbar__user" @click.stop="toggleUserMenu">
-            <img :src="avatarImage" alt="用户头像" />
+            <img :src="userAvatarSrc" alt="用户头像" />
             <span>{{ displayName }}</span>
           </button>
           <div v-show="userMenuOpen" class="prep-user-dropdown">
@@ -3045,18 +3181,46 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="prep-sidebar__list">
-          <button
+          <div
             v-for="item in visibleSpaces"
             :key="item.id"
-            type="button"
-            class="prep-sidebar__item"
-            :class="{ 'is-active': String(selectedSpaceId) === String(item.id) }"
-            @click="navigateToSpace(item.id)"
+            class="prep-sidebar__item-wrap"
           >
-            <span class="prep-sidebar__tag">{{ item.tag }}</span>
-            <span class="prep-sidebar__name">{{ item.name }}</span>
-            <span class="prep-sidebar__dots">⋮</span>
-          </button>
+            <button
+              type="button"
+              class="prep-sidebar__item"
+              :class="{ 'is-active': String(selectedSpaceId) === String(item.id) }"
+              @click="navigateToSpace(item.id)"
+            >
+              <span class="prep-sidebar__tag">{{ item.tag }}</span>
+              <span class="prep-sidebar__name">{{ item.name }}</span>
+            </button>
+            <div class="prep-sidebar__more-wrap" @click.stop>
+              <button
+                type="button"
+                class="prep-sidebar__more-btn"
+                :disabled="deletingSpaceId === String(item.id)"
+                @mousedown.stop.prevent="toggleSpaceActionMenu(item.id)"
+              >
+                ⋮
+              </button>
+              <div
+                v-show="spaceActionMenuId === String(item.id)"
+                class="prep-sidebar__menu"
+              >
+                <button
+                  v-if="isSpaceOwner(item)"
+                  type="button"
+                  class="danger"
+                  :disabled="deletingSpaceId === String(item.id)"
+                  @mousedown.stop.prevent="deletePrepSpace(item)"
+                >
+                  {{ deletingSpaceId === String(item.id) ? '删除中...' : '删除备课区' }}
+                </button>
+                <div v-else class="prep-sidebar__menu-tip">仅创建者可删除</div>
+              </div>
+            </div>
+          </div>
         </div>
       </aside>
 
@@ -4320,12 +4484,16 @@ button {
   margin-top: 12px;
 }
 
+.prep-sidebar__item-wrap {
+  position: relative;
+}
+
 .prep-sidebar__item {
   width: 100%;
   min-height: 38px;
-  padding: 0 10px;
+  padding: 0 38px 0 10px;
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto 1fr;
   align-items: center;
   gap: 8px;
   border: 1px solid transparent;
@@ -4359,8 +4527,74 @@ button {
   font-size: 13px;
 }
 
-.prep-sidebar__dots {
+.prep-sidebar__more-wrap {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+}
+
+.prep-sidebar__more-btn {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
   color: #7d879b;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.prep-sidebar__more-btn:hover:not(:disabled) {
+  background: #eef3ff;
+  color: #2f6bff;
+}
+
+.prep-sidebar__more-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.prep-sidebar__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 120px;
+  padding: 6px;
+  border: 1px solid #dbe3f1;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(20, 32, 61, 0.12);
+  z-index: 20;
+}
+
+.prep-sidebar__menu button {
+  width: 100%;
+  height: 32px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #46526a;
+  font-size: 13px;
+  text-align: left;
+}
+
+.prep-sidebar__menu button:hover:not(:disabled) {
+  background: #f4f7fb;
+}
+
+.prep-sidebar__menu button.danger {
+  color: #d14343;
+}
+
+.prep-sidebar__menu button.danger:hover:not(:disabled) {
+  background: #fff1f1;
+}
+
+.prep-sidebar__menu-tip {
+  padding: 8px 10px;
+  color: #7d879b;
+  font-size: 12px;
 }
 
 .prep-workspace {

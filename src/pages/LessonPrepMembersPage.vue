@@ -5,13 +5,14 @@ import { useRoute, useRouter } from 'vue-router';
 import { useUserStore } from '@/stores/userStore';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import logoBlue from '@/assets/logo_blue.png';
-import avatarImage from '@/assets/课堂派头像.jpg';
+import defaultAvatarImage from '@/assets/课堂派头像.jpg';
 
 const API_BASE = 'http://localhost:8080';
 
 const router = useRouter();
 const route = useRoute();
 const userStore = useUserStore();
+const userAvatarSrc = computed(() => userStore.account?.avatarUrl || defaultAvatarImage);
 
 const topMenus = [
   { key: 'course', label: '我的课堂' },
@@ -619,7 +620,7 @@ onBeforeUnmount(() => {
         <button type="button" class="prep-topbar__bell">🔔</button>
         <div ref="userMenuRef" class="dropdown prep-topbar__user-menu">
           <button type="button" class="prep-topbar__user" @click.stop="toggleUserMenu">
-            <img :src="avatarImage" alt="用户头像" />
+            <img :src="userAvatarSrc" alt="用户头像" />
             <span>{{ displayName }}</span>
           </button>
           <div v-show="userMenuOpen" class="prep-user-dropdown">
