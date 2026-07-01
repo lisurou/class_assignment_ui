@@ -114,6 +114,7 @@ const courseLearningIndicatorStyle = ref({
   transform: 'translateX(0px)',
   opacity: '0'
 });
+const courseSearchKeyword = ref('');
 
 let courseCode=ref('');
 let courseName=ref('');
@@ -135,19 +136,6 @@ const taughtSemesterGroups = ref([]);
 const draggedArchivedCourseId = ref('');
 const archiveSortSaving = ref(false);
 const activeArchivedCourseMenuId = ref('');
-const COURSE_SKIN_STORAGE_KEY = 'course_detail_skin_map';
-
-const loadCourseSkinMap = () => {
-  try {
-    return JSON.parse(localStorage.getItem(COURSE_SKIN_STORAGE_KEY) || '{}');
-  } catch (error) {
-    console.log('读取课程皮肤失败：', error);
-    return {};
-  }
-};
-
-const courseSkinMap = ref(loadCourseSkinMap());
-const courseSearchKeyword = ref('');
 
 // 移除了之前 watch(releaseImmediate) 清空时间的逻辑，让它保留初始化时生成的当前时间
 
@@ -2191,30 +2179,26 @@ const currentCourseMemberCount = computed(() => {
   return Number.isFinite(count) ? count : 0;
 });
 const currentCourseBanner = computed(() => {
-  return courseSkinMap.value[currentCourseKey.value] || defaultCourseBanner;
+  return course.value?.bannerUrl || defaultCourseBanner;
 });
 const getCourseBannerById = (courseId) => {
   if (!courseId) {
     return defaultCourseBanner;
   }
-  return courseSkinMap.value[courseId] || defaultCourseBanner;
+  return defaultCourseBanner;
 };
 const currentCourseBannerStyle = computed(() => ({
   backgroundImage: `linear-gradient(rgba(78, 120, 157, 0.32), rgba(78, 120, 157, 0.32)), url("${currentCourseBanner.value}")`
 }));
 const getCourseCardHeaderStyle = (courseItem) => ({
-  backgroundImage: `linear-gradient(rgba(78, 120, 157, 0.18), rgba(78, 120, 157, 0.18)), url("${getCourseBannerById(courseItem?.id)}")`
+  backgroundImage: `linear-gradient(rgba(78, 120, 157, 0.18), rgba(78, 120, 157, 0.18)), url("${courseItem?.bannerUrl || defaultCourseBanner}")`
 });
-
-const persistCourseSkinMap = () => {
-  localStorage.setItem(COURSE_SKIN_STORAGE_KEY, JSON.stringify(courseSkinMap.value));
-};
 
 const triggerCourseSkinPicker = () => {
   courseSkinInputRef.value?.click();
 };
 
-const handleCourseSkinChange = (event) => {
+const handleCourseSkinChange = async (event) => {
   const file = event?.target?.files?.[0];
   if (!file) {
     return;
@@ -2235,32 +2219,62 @@ const handleCourseSkinChange = (event) => {
     event.target.value = '';
     return;
   }
-  const reader = new FileReader();
-  reader.onload = () => {
-    courseSkinMap.value = {
-      ...courseSkinMap.value,
-      [courseId]: reader.result
-    };
-    persistCourseSkinMap();
-    ElMessage.success('课程皮肤已更新');
-  };
-  reader.onerror = () => {
-    ElMessage.error('读取图片失败，请重试');
-  };
-  reader.readAsDataURL(file);
+  try {
+    const formData = new FormData();
+    formData.append('courseId', courseId);
+    formData.append('file', file);
+    const response = await axios.post('http://localhost:8080/upload-course-banner', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+    const data = response.data;
+    if (data.success && data.course) {
+      userStore.setCourse(data.course);
+      // 同步更新首页卡片列表的横幅 URL，无需刷新就能看到变化
+      if (data.course.bannerUrl) {
+        [userStore.taught, userStore.top, userStore.learned].forEach(list => {
+          if (Array.isArray(list)) {
+            const item = list.find(c => c?.id === currentCourseKey.value);
+            if (item) item.bannerUrl = data.course.bannerUrl;
+          }
+        });
+      }
+      ElMessage.success('课程横幅已更新');
+    } else {
+      ElMessage.error(data.message || '上传失败');
+    }
+  } catch (error) {
+    console.log('上传课程横幅失败：', error);
+    ElMessage.error('上传课程横幅失败，请检查网络');
+  }
   event.target.value = '';
 };
 
-const resetCourseSkin = () => {
+const resetCourseSkin = async () => {
   const courseId = currentCourseKey.value;
-  if (!courseId || !courseSkinMap.value[courseId]) {
+  if (!courseId) {
     return;
   }
-  const nextMap = { ...courseSkinMap.value };
-  delete nextMap[courseId];
-  courseSkinMap.value = nextMap;
-  persistCourseSkinMap();
-  ElMessage.success('已恢复默认皮肤');
+  try {
+    const response = await axios.post('http://localhost:8080/delete-course-banner', { courseId });
+    const data = response.data;
+    if (data.success) {
+      userStore.setCourse({ ...course.value, bannerUrl: null, bannerStoredName: null });
+      // 同步更新首页卡片列表
+      const courseId = currentCourseKey.value;
+      [userStore.taught, userStore.top, userStore.learned].forEach(list => {
+        if (Array.isArray(list)) {
+          const item = list.find(c => c?.id === courseId);
+          if (item) { item.bannerUrl = null; item.bannerStoredName = null; }
+        }
+      });
+      ElMessage.success('已恢复默认皮肤');
+    } else {
+      ElMessage.error(data.message || '恢复失败');
+    }
+  } catch (error) {
+    console.log('恢复默认横幅失败：', error);
+    ElMessage.error('恢复失败，请检查网络');
+  }
 };
 watch(
   [currentCourseKey, materialsCategory],
@@ -2878,7 +2892,7 @@ async function deleteLink(linkItem) {
             >
             <button class="course-skin-btn" @click="triggerCourseSkinPicker">更换皮肤</button>
             <button
-              v-if="courseSkinMap[currentCourseKey]"
+              v-if="course?.bannerUrl"
               class="course-skin-btn is-secondary"
               @click="resetCourseSkin"
             >
