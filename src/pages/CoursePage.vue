@@ -879,7 +879,9 @@ watch([activeCourseLearningTabKey, assignmentOverlayActive, courseLearning, show
 
 const validAssignmentDetails = computed(() => assignmentDetails.value);
 
-const studentVisibleAssignmentDetails = computed(() => validAssignmentDetails.value.filter(detail => detail?.assignmentId));
+const studentVisibleAssignmentDetails = computed(() =>
+  validAssignmentDetails.value.filter(detail => detail?.assignmentId && isAssignmentPublished(detail))
+);
 
 const filteredTeacherAssignments = computed(() => {
   const list = validAssignmentDetails.value.filter(detail => detail?.assignmentId);
@@ -1103,7 +1105,7 @@ const getTeacherAssignmentStageText = (assignmentDetail) => {
 };
 
 const isAssignmentPublished = (assignmentDetail) => Boolean(
-  assignmentDetail?.assignmentId && (assignmentDetail?.title || assignmentDetail?.deadline || assignmentDetail?.content)
+  assignmentDetail?.assignmentId && String(assignmentDetail?.publishTime || '').trim()
 );
 
 const formatTeacherDeadlineShort = (deadline) => {
@@ -1676,15 +1678,17 @@ const openCreateAssignmentDialog = () => {
 };
 
 const openPublishAssignmentDialog = (assignmentDetail) => {
-  currentAssignmentDetail.value = assignmentDetail ? { ...assignmentDetail } : currentAssignmentDetail.value;
-  openCreateAssignmentDialog();
+  if (!assignmentDetail?.assignmentId) {
+    return;
+  }
+  openEditAssignmentDialog(assignmentDetail);
 };
 
 const openEditAssignmentDialog = (assignmentDetail) => {
   releaseEditMode.value = true;
   editingAssignmentId.value = assignmentDetail?.assignmentId || '';
   resetReleaseForm(assignmentDetail);
-  releasePublishTimeReadonly.value = releaseImmediate.value;
+  releasePublishTimeReadonly.value = false;
   displayReleaseAssignment.value = true;
   activeTeacherAssignmentMenu.value = '';
 };

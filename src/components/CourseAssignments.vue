@@ -316,6 +316,7 @@ const updateDraftScore = (assignmentDetail, value) => {
             v-if="iTeach"
             :key="`${assignmentDetail.id}-${assignmentDetail.assignmentId}-${assignmentDetail.accountId}`"
             class="homework-item teacher-homework-item"
+            :class="{ 'teacher-homework-item-unpublished': !isAssignmentPublished(assignmentDetail) }"
         >
           <div class="homework-logo">
             <img src="@/assets/课堂派作业图片.png" alt="课堂派作业图片">
@@ -326,7 +327,13 @@ const updateDraftScore = (assignmentDetail, value) => {
               <div class="assignment-title">{{ assignmentDetail.title }}</div>
             </button>
             <div class="assignment-meta teacher-assignment-meta">
-              <span v-if="getTeacherAssignmentStageText(assignmentDetail)">{{ getTeacherAssignmentStageText(assignmentDetail) }}</span>
+              <span
+                v-if="getTeacherAssignmentStageText(assignmentDetail)"
+                class="teacher-stage-text"
+                :class="{ 'is-unpublished': !isAssignmentPublished(assignmentDetail) }"
+              >
+                {{ getTeacherAssignmentStageText(assignmentDetail) }}
+              </span>
               <span v-if="isAssignmentPublished(assignmentDetail)" class="teacher-deadline-meta">
                 <span class="teacher-deadline-label">提交截止时间：</span>
                 <span class="teacher-deadline-value">{{ formatTeacherDeadlineShort(assignmentDetail.deadline) }}</span>
@@ -730,7 +737,7 @@ const updateDraftScore = (assignmentDetail, value) => {
                   placeholder="选择日期时间"
                   format="YYYY-MM-DD HH:mm"
                   value-format="YYYY-MM-DD HH:mm"
-                  :readonly="releaseEditMode"
+                  :readonly="releasePublishTimeReadonly"
                   class="custom-date-picker"
                 />
               </div>
@@ -903,6 +910,10 @@ button {
   min-height: 104px;
 }
 
+.teacher-homework-item-unpublished {
+  min-height: 96px;
+}
+
 .homework-logo {
   width: 52px;
   margin: 0 18px 0 0;
@@ -940,6 +951,16 @@ button {
 
 .teacher-assignment-meta {
   margin-top: 8px;
+}
+
+.teacher-stage-text {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #606266;
+}
+
+.teacher-stage-text.is-unpublished {
+  color: #909399;
 }
 
 .assignment-title-button {
