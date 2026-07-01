@@ -211,6 +211,10 @@ const releaseDeadlineModel = computed({
   set: (value) => emit('update:releaseDeadline', value),
 });
 
+const disablePastDate = (time) => {
+  return time.getTime() < Date.now() - 86400000;
+};
+
 const releaseAllowFormatModel = computed({
   get: () => props.releaseAllowFormat,
   set: (value) => emit('update:releaseAllowFormat', value),
@@ -738,6 +742,7 @@ const updateDraftScore = (assignmentDetail, value) => {
                   format="YYYY-MM-DD HH:mm"
                   value-format="YYYY-MM-DD HH:mm"
                   :readonly="releasePublishTimeReadonly"
+                  :disabled-date="disablePastDate"
                   class="custom-date-picker"
                 />
               </div>
