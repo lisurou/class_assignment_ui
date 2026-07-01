@@ -11,6 +11,7 @@ import CourseAssignments from '@/components/CourseAssignments.vue';
 import TopicPage from '@/components/TopicPage.vue';
 import defaultCourseBanner from '@/assets/课堂派课程详情图片.png';
 import courseCodeQrIcon from '@/assets/course-code-qrcode.svg';
+import defaultAvatarImage from '@/assets/课堂派头像.jpg';
 
 const router = useRouter()
 const isSearchFocused = ref(false);
@@ -29,6 +30,7 @@ const identity=computed(()=>userStore.account?.identity||"学生");
 const canCreateCourse = computed(() => identity.value === '老师');
 const createJoinButtonText = computed(() => canCreateCourse.value ? '＋创建/加入课程' : '＋加入课程');
 const displayName = computed(() => userStore.account?.name || '教师用户');
+const userAvatarSrc = computed(() => userStore.account?.avatarUrl || defaultAvatarImage);
 const userMenuOpen = ref(false);
 const userMenuRef = ref(null);
 const joinDialogVisible=ref(false);
@@ -1108,6 +1110,40 @@ const isAssignmentPublished = (assignmentDetail) => Boolean(
   assignmentDetail?.assignmentId && String(assignmentDetail?.publishTime || '').trim()
 );
 
+const parseAssignmentDeadline = (deadline) => {
+  const normalized = String(deadline || '').trim();
+  if (!normalized || normalized === '暂无' || normalized === '待发布') {
+    return null;
+  }
+  const safeValue = normalized.replace(/\//g, '-');
+  const date = new Date(safeValue.includes('T') ? safeValue : safeValue.replace(' ', 'T'));
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date;
+};
+
+const parseAssignmentScheduleTime = (timeValue) => {
+  const normalized = String(timeValue || '').trim();
+  if (!normalized) {
+    return null;
+  }
+  const safeValue = normalized.replace(/\//g, '-');
+  const date = new Date(safeValue.includes('T') ? safeValue : safeValue.replace(' ', 'T'));
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date;
+};
+
+const isAssignmentDeadlinePassed = (assignmentDetail) => {
+  const deadline = parseAssignmentDeadline(assignmentDetail?.deadline);
+  if (!deadline) {
+    return false;
+  }
+  return Date.now() > deadline.getTime();
+};
+
 const formatTeacherDeadlineShort = (deadline) => {
   if (!deadline) return '暂无';
   return String(deadline).replace('T', ' ').slice(0, 16);
@@ -1404,6 +1440,10 @@ const handleViewLearnAssignmentDetail = (assignmentDetail) => {
 };
 
 function handleAssignmentSubmit(assignmentDetail){
+  if (isAssignmentDeadlinePassed(assignmentDetail)) {
+    ElMessage.error('已超过作业截止时间，不能再提交');
+    return;
+  }
   handleViewLearnAssignmentDetail(assignmentDetail);
   learnAssignmentTab.value = 'submit';
 }
@@ -1585,6 +1625,11 @@ const handleDeleteSubmittedFile = async () => {
 
 //提交作业
 const handleConfirmSubmit=async()=>{
+  if (isAssignmentDeadlinePassed(learnAssignmentDetail.value)) {
+    errorMessage.value = "已超过作业截止时间，不能再提交";
+    ElMessage.error(errorMessage.value);
+    return;
+  }
   const trimmedSubmitContent = submitContent.value.trim();
   if (!trimmedSubmitContent && !selectedSubmissionFile.value?.rawFile && !learnAssignmentDetail.value?.fileName) {
     errorMessage.value = "请至少填写留言或上传附件";
@@ -1672,7 +1717,7 @@ const openCreateAssignmentDialog = () => {
   releaseEditMode.value = false;
   editingAssignmentId.value = '';
   resetReleaseForm();
-  releasePublishTimeReadonly.value = releaseImmediate.value;
+  releasePublishTimeReadonly.value = false;
   displayReleaseAssignment.value = true;
   activeTeacherAssignmentMenu.value = '';
 };
@@ -1688,7 +1733,7 @@ const openEditAssignmentDialog = (assignmentDetail) => {
   releaseEditMode.value = true;
   editingAssignmentId.value = assignmentDetail?.assignmentId || '';
   resetReleaseForm(assignmentDetail);
-  releasePublishTimeReadonly.value = false;
+  releasePublishTimeReadonly.value = isAssignmentPublished(assignmentDetail);
   displayReleaseAssignment.value = true;
   activeTeacherAssignmentMenu.value = '';
 };
@@ -1761,6 +1806,13 @@ const confirmReleaseAssignment = async () => {
     const publishTime = releaseEditMode.value
       ? releasePublishTime.value
       : (releaseImmediate.value ? releasePublishTime.value : '');
+    const publishDate = parseAssignmentScheduleTime(publishTime);
+    const deadlineDate = parseAssignmentScheduleTime(releaseDeadline.value);
+    if (publishDate && deadlineDate && deadlineDate.getTime() < publishDate.getTime()) {
+      errorMessage.value = "截止日期不能小于发布日期";
+      ElMessage.error(errorMessage.value);
+      return;
+    }
     const formData = new FormData();
     formData.append('title', releaseTitle.value);
     formData.append('publishTime', publishTime);
@@ -2593,7 +2645,7 @@ async function deleteLink(linkItem) {
       </div>
       <div ref="userMenuRef" class="dropdown prep-topbar__user-menu">
         <button type="button" class="prep-topbar__user" @click.stop="toggleUserMenu">
-          <img alt="用户头像" src="@/assets/课堂派头像.jpg"/>
+          <img :src="userAvatarSrc" alt="用户头像"/>
           <span>{{ displayName }}</span>
         </button>
         <div v-show="userMenuOpen" class="dropdown-content is-open">
@@ -2649,7 +2701,7 @@ async function deleteLink(linkItem) {
       </div>
       <div ref="userMenuRef" class="dropdown prep-topbar__user-menu">
         <button type="button" class="prep-topbar__user" @click.stop="toggleUserMenu">
-          <img alt="用户头像" src="@/assets/课堂派头像.jpg"/>
+          <img :src="userAvatarSrc" alt="用户头像"/>
           <span>{{ displayName }}</span>
         </button>
         <div v-show="userMenuOpen" class="dropdown-content is-open">
@@ -2958,6 +3010,7 @@ async function deleteLink(linkItem) {
             :get-teacher-assignment-stage-text="getTeacherAssignmentStageText"
             :is-assignment-published="isAssignmentPublished"
             :format-teacher-deadline-short="formatTeacherDeadlineShort"
+            :is-assignment-deadline-passed="isAssignmentDeadlinePassed"
             :get-teacher-assignment-stats="getTeacherAssignmentStats"
             :handle-view-learn-assignment-detail="handleViewLearnAssignmentDetail"
             :handle-assignment-submit="handleAssignmentSubmit"

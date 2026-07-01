@@ -55,6 +55,7 @@ const props = defineProps({
   releaseSubmitButtonText: { type: String, default: '确认' },
   getTeacherAssignmentStageText: { type: Function, required: true },
   isAssignmentPublished: { type: Function, required: true },
+  isAssignmentDeadlinePassed: { type: Function, required: true },
   formatTeacherDeadlineShort: { type: Function, required: true },
   getTeacherAssignmentStats: { type: Function, required: true },
   handleViewLearnAssignmentDetail: { type: Function, required: true },
@@ -306,8 +307,16 @@ const updateDraftScore = (assignmentDetail, value) => {
               <span v-if="assignmentDetail.correct === '已批改'">{{ assignmentDetail.score }}分</span>
             </div>
           </div>
-          <button class="submit-button" :class="{ 'is-submitted': assignmentDetail.submit === '已提交' }" @click="handleAssignmentSubmit(assignmentDetail)">
-            {{ assignmentDetail.submit === '已提交' ? '已提交' : '提交作业' }}
+          <button
+            class="submit-button"
+            :class="{
+              'is-submitted': assignmentDetail.submit === '已提交',
+              'is-deadline-passed': isAssignmentDeadlinePassed(assignmentDetail)
+            }"
+            :disabled="isAssignmentDeadlinePassed(assignmentDetail)"
+            @click="handleAssignmentSubmit(assignmentDetail)"
+          >
+            {{ isAssignmentDeadlinePassed(assignmentDetail) ? '已截止' : (assignmentDetail.submit === '已提交' ? '已提交' : '提交作业') }}
           </button>
         </div>
 
@@ -572,11 +581,17 @@ const updateDraftScore = (assignmentDetail, value) => {
           <div class="student-submit-header">
             <div class="student-submit-heading">
               <div class="student-submit-title">提交内容</div>
-              <div class="student-submit-tip">支持上传附件和填写留言，确认后老师即可查看你的提交内容。</div>
+              <div class="student-submit-tip">
+                {{ isAssignmentDeadlinePassed(learnAssignmentDetail) ? '当前作业已截止，不能再提交或修改提交内容。' : '支持上传附件和填写留言，确认后老师即可查看你的提交内容。' }}
+              </div>
             </div>
-            <button class="student-submit-confirm" @click="handleConfirmSubmit()">
-              {{ studentSubmitHasSubmitted ? '再次提交' : '确认提交' }}
+            <button class="student-submit-confirm" :disabled="isAssignmentDeadlinePassed(learnAssignmentDetail)" @click="handleConfirmSubmit()">
+              {{ isAssignmentDeadlinePassed(learnAssignmentDetail) ? '已截止' : (studentSubmitHasSubmitted ? '再次提交' : '确认提交') }}
             </button>
+          </div>
+
+          <div v-if="isAssignmentDeadlinePassed(learnAssignmentDetail)" class="student-submit-deadline-alert">
+            已超过截止时间，当前作业不允许继续提交。
           </div>
 
           <template v-if="studentSubmitHasSubmitted">
@@ -605,7 +620,7 @@ const updateDraftScore = (assignmentDetail, value) => {
           <div class="student-submit-section">
             <div class="student-submit-section-title">作业附件</div>
             <input ref="submissionFileInput" type="file" class="student-hidden-file-input" @change="handleSubmissionFileChange">
-            <div class="student-upload-box" @click="triggerSubmissionFilePicker">
+            <div class="student-upload-box" :class="{ disabled: isAssignmentDeadlinePassed(learnAssignmentDetail) }" @click="!isAssignmentDeadlinePassed(learnAssignmentDetail) && triggerSubmissionFilePicker()">
               <div class="student-upload-icon">⇪</div>
               <div>点击上传添加作业文件</div>
               <small>支持各类文档、图片、代码、压缩包等格式</small>
@@ -613,13 +628,13 @@ const updateDraftScore = (assignmentDetail, value) => {
             <div v-if="selectedSubmissionFile" class="student-selected-file-tip">
               已选择：{{ selectedSubmissionFile.name }} {{ selectedSubmissionFile.sizeText ? `(${selectedSubmissionFile.sizeText})` : '' }}
               <button v-if="studentSubmitHasSubmitted && !selectedSubmissionFile.rawFile" class="student-inline-link" @click="downloadSubmittedFile">下载附件</button>
-              <button class="student-inline-link danger" @click="handleDeleteSubmittedFile">删除附件</button>
+              <button v-if="!isAssignmentDeadlinePassed(learnAssignmentDetail)" class="student-inline-link danger" @click="handleDeleteSubmittedFile">删除附件</button>
             </div>
           </div>
 
           <div class="student-submit-section">
             <div class="student-submit-section-title">作业留言 <span>选填</span></div>
-            <textarea v-model="submitContentModel" class="student-submit-textarea" placeholder="作业说明作补充或留言使用哦！"></textarea>
+            <textarea v-model="submitContentModel" class="student-submit-textarea" :disabled="isAssignmentDeadlinePassed(learnAssignmentDetail)" placeholder="作业说明作补充或留言使用哦！"></textarea>
           </div>
         </div>
       </div>
@@ -738,6 +753,7 @@ const updateDraftScore = (assignmentDetail, value) => {
                   format="YYYY-MM-DD HH:mm"
                   value-format="YYYY-MM-DD HH:mm"
                   :readonly="releasePublishTimeReadonly"
+                  :disabled="releasePublishTimeReadonly"
                   class="custom-date-picker"
                 />
               </div>
@@ -1154,6 +1170,14 @@ button {
   border-color: #bcd3ff;
 }
 
+.submit-button.is-deadline-passed,
+.submit-button:disabled {
+  border-color: #dcdfe6;
+  background: #f5f7fa;
+  color: #b3b9c5;
+  cursor: not-allowed;
+}
+
 .homework-empty {
   min-height: 140px;
   display: flex;
@@ -1538,6 +1562,12 @@ button {
   font-size: 12px;
 }
 
+.student-submit-confirm:disabled {
+  background: #dcdfe6;
+  color: #909399;
+  cursor: not-allowed;
+}
+
 .student-comment-empty {
   display: flex;
   flex-direction: column;
@@ -1578,6 +1608,24 @@ button {
   width: 220px !important;
 }
 
+.custom-date-picker:deep(.el-input.is-disabled .el-input__wrapper) {
+  background: #f5f7fa;
+  border-color: #dcdfe6;
+  box-shadow: 0 0 0 1px #dcdfe6 inset;
+  cursor: not-allowed;
+}
+
+.custom-date-picker:deep(.el-input.is-disabled .el-input__inner) {
+  color: #909399;
+  -webkit-text-fill-color: #909399;
+  cursor: not-allowed;
+}
+
+.custom-date-picker:deep(.el-input.is-disabled .el-input__prefix),
+.custom-date-picker:deep(.el-input.is-disabled .el-input__suffix) {
+  color: #c0c4cc;
+}
+
 .student-inline-link,
 .student-file-download,
 .student-file-delete {
@@ -1593,6 +1641,16 @@ button {
 .student-submit-section:first-of-type {
   border-top: none;
   padding-top: 0;
+}
+
+.student-submit-deadline-alert {
+  margin-bottom: 18px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: #fff4f4;
+  border: 1px solid #fbc4c4;
+  color: #f56c6c;
+  font-size: 13px;
 }
 
 .student-submit-section-title {
@@ -1621,8 +1679,19 @@ button {
   margin-bottom: 14px;
 }
 
+.student-upload-box.disabled {
+  border-color: #dcdfe6;
+  background: #f5f7fa;
+  color: #b3b9c5;
+  cursor: not-allowed;
+}
+
 .student-upload-box small {
   color: #909399;
+}
+
+.student-upload-box.disabled small {
+  color: #b3b9c5;
 }
 
 .student-hidden-file-input {
@@ -1642,6 +1711,12 @@ button {
   border-radius: 8px;
   box-sizing: border-box;
   resize: vertical;
+}
+
+.student-submit-textarea:disabled {
+  background: #f5f7fa;
+  color: #909399;
+  cursor: not-allowed;
 }
 
 .student-submitted-preview {
