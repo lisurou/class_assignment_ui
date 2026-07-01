@@ -26,6 +26,8 @@ const topMenus = [
   { key: 'knowledge', label: '多模态知识库' }
 ];
 const identity=computed(()=>userStore.account?.identity||"学生");
+const canCreateCourse = computed(() => identity.value === '老师');
+const createJoinButtonText = computed(() => canCreateCourse.value ? '＋创建/加入课程' : '＋加入课程');
 const displayName = computed(() => userStore.account?.name || '教师用户');
 const userMenuOpen = ref(false);
 const userMenuRef = ref(null);
@@ -115,7 +117,6 @@ let courseCode=ref('');
 let courseName=ref('');
 let teachClass=ref('');
 let newTime=ref('');
-let studentNumber=ref('');
 
 
 let errorMessage=ref('');
@@ -180,13 +181,16 @@ const handleJoinConfirm=async()=>{
 };
 
 const handleCreateConfirm=async()=>{
+if (!canCreateCourse.value) {
+  ElMessage.error('学生身份不能创建课程');
+  createDialogVisible.value = false;
+  return;
+}
 try{
   const newCourse={
     time:newTime.value,
     name:courseName.value,
-    classes:teachClass.value,
-    number:studentNumber.value,
-    teacher:userStore.account?.name
+    classes:teachClass.value
   }
   console.log("账号：",userStore.account?.accountId)
 const response=await axios.post('http://localhost:8080/create-course', {
@@ -549,9 +553,14 @@ function handleUserMenuAction(action) {
   action?.();
 }
 onMounted(() => {
+  userStore.clearLegacyCourseCache();
+  userStore.setAssignmentDetails([]);
+  userStore.setCourse(null);
+  userStore.setAssignmentSubmit(null);
   document.addEventListener('click', handleDocumentClick);
   loadNotifications();
   window.addEventListener('resize', updateCourseLearningIndicator);
+  refreshCourseList();
 });
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleDocumentClick);
@@ -571,6 +580,9 @@ function goToCourse(){
   showLearnAssignment.value = false;
   displayReleaseAssignment.value = false;
   currentCourseId.value = '';
+  userStore.setCourse(null);
+  userStore.setAssignmentDetails([]);
+  userStore.setAssignmentSubmit(null);
   members.value = false;
 }
 function backToCourseContent(){
@@ -593,6 +605,7 @@ const syncMainCourseTabByIdentity = (currentIdentity) => {
     iLearn.value = false;
     return;
   }
+  createDialogVisible.value = false;
   iTeach.value = false;
   iLearn.value = true;
 };
@@ -2652,9 +2665,9 @@ async function deleteLink(linkItem) {
       <div class="top-course-container-header">
         <h2>置顶课程</h2>
         <div class="course-dropdown" @click.stop>
-          <button class="create-join-course" @click="createJoinDropdownOpen = !createJoinDropdownOpen">＋创建/加入课程</button>
+          <button class="create-join-course" @click="createJoinDropdownOpen = !createJoinDropdownOpen">{{ createJoinButtonText }}</button>
           <div v-show="createJoinDropdownOpen" class="course-dropdown-content">
-            <el-button @click="createDialogVisible=true; createJoinDropdownOpen = false">创建课程</el-button>
+            <el-button v-if="canCreateCourse" @click="createDialogVisible=true; createJoinDropdownOpen = false">创建课程</el-button>
             <el-button @click="joinDialogVisible=true; createJoinDropdownOpen = false">加入课程</el-button>
           </div>
         </div>
@@ -3017,10 +3030,6 @@ async function deleteLink(linkItem) {
       <div class="input-div">
         <div><span>*</span><label>学年-学期</label></div>
         <input v-model="newTime"/>
-      </div>
-      <div class="input-div">
-        <div><span>*</span><label>成员个数</label></div>
-        <input v-model="studentNumber"/>
       </div>
     </div>
     <!-- 底部按钮 -->
