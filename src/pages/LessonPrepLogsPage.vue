@@ -4,8 +4,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useUserStore } from '@/stores/userStore';
 import { ElMessage } from 'element-plus';
-import logoBlue from '@/assets/logo_blue.png';
 import defaultAvatarImage from '@/assets/课堂派头像.jpg';
+import AppTopbar from '@/components/AppTopbar.vue';
 
 const API_BASE = 'http://localhost:8080';
 
@@ -24,8 +24,8 @@ const topMenus = [
   { key: 'knowledge', label: '多模态知识库' }
 ];
 
-const userMenuOpen = ref(false);
-const userMenuRef = ref(null);
+const notifications = ref([]);
+const notificationsLoading = ref(false);
 
 const logsLoading = ref(false);
 const spaceLoading = ref(false);
@@ -37,6 +37,7 @@ const activeLogFilter = ref('全部');
 let logsFetchTimer = null;
 
 const displayName = computed(() => userStore.account?.name || '教师用户');
+const unreadNotificationCount = computed(() => notifications.value.filter(item => !item?.readStatus).length);
 const spaceTitle = computed(() => currentSpaceDetail.value?.name || '操作记录');
 const spaceTag = computed(() => {
   const type = String(
@@ -52,25 +53,6 @@ function getAccountId() {
   return userStore.account?.accountId || '';
 }
 
-function toggleUserMenu() {
-  userMenuOpen.value = !userMenuOpen.value;
-}
-
-function closeUserMenu() {
-  userMenuOpen.value = false;
-}
-
-function handleDocumentClick(event) {
-  if (!userMenuRef.value?.contains(event.target)) {
-    closeUserMenu();
-  }
-}
-
-function handleUserMenuAction(action) {
-  closeUserMenu();
-  action?.();
-}
-
 function goToPersonalSetting() {
   router.push('/personal-setting');
 }
@@ -79,6 +61,87 @@ function goToLogin() {
   userStore.logout();
   router.push('/login');
 }
+
+const loadNotifications = async () => {
+  if (!userStore.account?.accountId) {
+    notifications.value = [];
+    return;
+  }
+  notificationsLoading.value = true;
+  try {
+    const response = await axios.get(`${API_BASE}/notifications`, {
+      params: {
+        accountId: userStore.account.accountId
+      }
+    });
+    const data = response.data;
+    if (data.success) {
+      notifications.value = (data.notifications || []).filter(Boolean);
+      return;
+    }
+    ElMessage.error(data.message || '通知加载失败');
+  } catch (error) {
+    console.log('通知加载失败：', error);
+    ElMessage.error('通知加载失败，请稍后重试');
+  } finally {
+    notificationsLoading.value = false;
+  }
+};
+
+const markNotificationAsRead = async (notification, silent = false) => {
+  if (!notification?.id || notification?.readStatus) {
+    return true;
+  }
+  try {
+    const response = await axios.post(`${API_BASE}/notifications/read-one`, {
+      notificationId: notification.id,
+      accountId: userStore.account?.accountId
+    });
+    const data = response.data;
+    if (!data.success) {
+      if (!silent) {
+        ElMessage.error(data.message || '通知已读失败');
+      }
+      return false;
+    }
+    notifications.value = notifications.value.map(item => (
+      item?.id === notification.id ? { ...item, readStatus: true } : item
+    ));
+    return true;
+  } catch (error) {
+    console.log('通知已读失败：', error);
+    if (!silent) {
+      ElMessage.error('通知已读失败，请稍后重试');
+    }
+    return false;
+  }
+};
+
+const markAllNotificationsAsRead = async () => {
+  try {
+    const response = await axios.post(`${API_BASE}/notifications/read-all`, {
+      accountId: userStore.account?.accountId
+    });
+    const data = response.data;
+    if (!data.success) {
+      ElMessage.error(data.message || '全部已读失败');
+      return;
+    }
+    notifications.value = notifications.value.map(item => ({ ...item, readStatus: true }));
+    ElMessage.success(data.message || '全部标记为已读');
+  } catch (error) {
+    console.log('全部通知已读失败：', error);
+    ElMessage.error('全部已读失败，请稍后重试');
+  }
+};
+
+const handleNotificationClick = async (notification) => {
+  if (!notification) return;
+  await markNotificationAsRead(notification, true);
+  if (notification.courseId) {
+    router.push('/course');
+  }
+};
 
 function handleTopMenuClick(menuKey) {
   if (menuKey === 'course') {
@@ -247,7 +310,6 @@ function scheduleFetchLogs() {
 }
 
 onMounted(async () => {
-  document.addEventListener('click', handleDocumentClick);
   const spaceId = getSpaceId();
   if (spaceId) {
     await fetchSpaceDetail(spaceId);
@@ -270,7 +332,6 @@ watch([activeLogFilter, keyword], () => {
 });
 
 onBeforeUnmount(() => {
-  document.removeEventListener('click', handleDocumentClick);
   if (logsFetchTimer) {
     clearTimeout(logsFetchTimer);
     logsFetchTimer = null;
@@ -280,42 +341,24 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="lesson-prep-logs-page">
-    <header class="prep-topbar">
-      <div class="prep-topbar__left">
-        <img class="prep-topbar__logo" :src="logoBlue" alt="Ai课堂派" />
-        <nav class="prep-topbar__nav">
-          <button
-            v-for="item in topMenus"
-            :key="item.key"
-            type="button"
-            class="prep-topbar__nav-item"
-            :class="{ 'is-active': item.key === 'prep' }"
-            @click="handleTopMenuClick(item.key)"
-          >
-            {{ item.label }}
-          </button>
-        </nav>
-      </div>
-
-      <div class="prep-topbar__right">
-        <button type="button" class="prep-topbar__more">⋯ 更多</button>
-        <button type="button" class="prep-topbar__bell">🔔</button>
-        <div ref="userMenuRef" class="dropdown prep-topbar__user-menu">
-          <button type="button" class="prep-topbar__user" @click.stop="toggleUserMenu">
-            <img :src="userAvatarSrc" alt="用户头像" />
-            <span>{{ displayName }}</span>
-          </button>
-          <div v-show="userMenuOpen" class="prep-user-dropdown">
-            <button type="button" @click="handleUserMenuAction(() => router.push('/course'))">我的课堂</button>
-            <button type="button" @click="handleUserMenuAction(() => router.push('/lesson-prep'))">备课区</button>
-            <button type="button" @click="closeUserMenu">开通VIP</button>
-            <button type="button" @click="closeUserMenu">机构用户认证</button>
-            <button type="button" @click="handleUserMenuAction(goToPersonalSetting)">个人设置</button>
-            <button type="button" @click="handleUserMenuAction(goToLogin)">退出登录</button>
-          </div>
-        </div>
-      </div>
-    </header>
+    <AppTopbar
+      :menus="topMenus"
+      active-menu-key="prep"
+      :display-name="displayName"
+      :user-avatar-src="userAvatarSrc"
+      :notifications="notifications"
+      :notifications-loading="notificationsLoading"
+      :unread-notification-count="unreadNotificationCount"
+      :show-prep-entry="true"
+      @menu-click="handleTopMenuClick"
+      @notification-open="loadNotifications"
+      @notification-click="handleNotificationClick"
+      @mark-all-notifications-as-read="markAllNotificationsAsRead"
+      @go-course="() => router.push('/course')"
+      @go-prep="() => router.push('/lesson-prep')"
+      @go-personal-setting="goToPersonalSetting"
+      @logout="goToLogin"
+    />
 
     <div class="logs-container">
       <section class="prep-workspace">
@@ -473,6 +516,111 @@ button {
   position: relative;
   display: flex;
   align-items: center;
+}
+
+.prep-topbar__notification {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.prep-topbar__bell-badge {
+  position: absolute;
+  top: -6px;
+  right: -10px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #f56c6c;
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+
+.notification-panel {
+  position: absolute;
+  top: 42px;
+  right: -18px;
+  width: 360px;
+  max-height: 460px;
+  padding: 12px 0;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.15);
+  z-index: 1200;
+  overflow: hidden;
+}
+
+.notification-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px 10px;
+  border-bottom: 1px solid #edf2f7;
+  font-size: 15px;
+  color: #1f2937;
+  font-weight: 600;
+}
+
+.notification-panel__action {
+  font-size: 12px;
+  color: #409eff;
+}
+
+.notification-panel__list {
+  max-height: 396px;
+  overflow: auto;
+}
+
+.notification-panel__item {
+  width: 100%;
+  padding: 12px 16px;
+  text-align: left;
+  border-bottom: 1px solid #f3f4f6;
+  background: #fff;
+}
+
+.notification-panel__item:last-child {
+  border-bottom: none;
+}
+
+.notification-panel__item.unread {
+  background: #f7fbff;
+}
+
+.notification-panel__item-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.notification-panel__title {
+  font-size: 14px;
+  color: #1f2937;
+  font-weight: 600;
+}
+
+.notification-panel__time {
+  font-size: 11px;
+  color: #9ca3af;
+  white-space: nowrap;
+}
+
+.notification-panel__content {
+  font-size: 12px;
+  line-height: 1.7;
+  color: #4b5563;
+}
+
+.notification-panel__empty {
+  padding: 28px 16px;
+  text-align: center;
+  color: #9ca3af;
+  font-size: 13px;
 }
 
 .prep-topbar__user {

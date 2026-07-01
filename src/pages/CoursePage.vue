@@ -9,6 +9,7 @@ import mammoth from 'mammoth/mammoth.browser';
 import CourseMaterials from '@/components/CourseMaterials.vue';
 import CourseAssignments from '@/components/CourseAssignments.vue';
 import TopicPage from '@/components/TopicPage.vue';
+import AppTopbar from '@/components/AppTopbar.vue';
 import defaultCourseBanner from '@/assets/课堂派课程详情图片.png';
 import courseCodeQrIcon from '@/assets/course-code-qrcode.svg';
 import defaultAvatarImage from '@/assets/课堂派头像.jpg';
@@ -28,11 +29,13 @@ const topMenus = [
 ];
 const identity=computed(()=>userStore.account?.identity||"学生");
 const canCreateCourse = computed(() => identity.value === '老师');
+const courseTopbarMenus = computed(() => topMenus.map(item => ({
+  ...item,
+  visible: !item.teacherOnly || userStore.account?.identity === '老师'
+})));
 const createJoinButtonText = computed(() => canCreateCourse.value ? '＋创建/加入课程' : '＋加入课程');
 const displayName = computed(() => userStore.account?.name || '教师用户');
 const userAvatarSrc = computed(() => userStore.account?.avatarUrl || defaultAvatarImage);
-const userMenuOpen = ref(false);
-const userMenuRef = ref(null);
 const joinDialogVisible=ref(false);
 const createDialogVisible=ref(false);
 const taughtCourses = computed(() => userStore.taught || []);
@@ -89,8 +92,6 @@ const releaseAutoReturn = ref(false);
 const releaseAiEnabled=ref(false);
 const releaseAttachmentFile = ref(null);
 const releaseAttachmentRemoved = ref(false);
-const notificationPanelVisible = ref(false);
-const notificationPanelRef = ref(null);
 const notifications = ref([]);
 const notificationsLoading = ref(false);
 const courseMembers = ref([]);
@@ -524,36 +525,16 @@ function handleTopMenuClick(menuKey) {
     goToLessonPrep();
   }
 }
-function toggleUserMenu() {
-  userMenuOpen.value = !userMenuOpen.value;
-}
-function closeUserMenu() {
-  userMenuOpen.value = false;
-}
-function handleDocumentClick(event) {
-  if (!userMenuRef.value?.contains(event.target)) {
-    closeUserMenu();
-  }
-  if (!notificationPanelRef.value?.contains(event.target)) {
-    notificationPanelVisible.value = false;
-  }
-}
-function handleUserMenuAction(action) {
-  closeUserMenu();
-  action?.();
-}
 onMounted(() => {
   userStore.clearLegacyCourseCache();
   userStore.setAssignmentDetails([]);
   userStore.setCourse(null);
   userStore.setAssignmentSubmit(null);
-  document.addEventListener('click', handleDocumentClick);
   loadNotifications();
   window.addEventListener('resize', updateCourseLearningIndicator);
   refreshCourseList();
 });
 onBeforeUnmount(() => {
-  document.removeEventListener('click', handleDocumentClick);
   cleanupTeacherReviewPreview();
   window.removeEventListener('resize', updateCourseLearningIndicator);
 });
@@ -1313,13 +1294,6 @@ const loadNotifications = async () => {
   }
 };
 
-const toggleNotificationPanel = async () => {
-  notificationPanelVisible.value = !notificationPanelVisible.value;
-  if (notificationPanelVisible.value) {
-    await loadNotifications();
-  }
-};
-
 const markNotificationAsRead = async (notification, silent = false) => {
   if (!notification?.id || notification?.readStatus) {
     return true;
@@ -1449,7 +1423,6 @@ const openTeacherAssignmentDetail = async (assignmentDetail) => {
 const handleNotificationClick = async (notification) => {
   if (!notification) return;
   await markNotificationAsRead(notification, true);
-  notificationPanelVisible.value = false;
   if (!notification.courseId) {
     return;
   }
@@ -2605,130 +2578,52 @@ async function deleteLink(linkItem) {
 </script>
 
 <template>
-  <header v-if="!showCourseDetails" class="prep-topbar course-topbar">
-    <div class="prep-topbar__left">
-      <img class="prep-topbar__logo" src="@/assets/logo_blue.png" alt="Ai课堂派">
-      <nav class="prep-topbar__nav">
-        <button
-          v-for="item in topMenus"
-          :key="item.key"
-          v-show="!item.teacherOnly || userStore.account?.identity === '老师'"
-          type="button"
-          class="prep-topbar__nav-item"
-          :class="{ 'is-active': item.key === 'course' }"
-          @click="handleTopMenuClick(item.key)"
-        >
-          {{ item.label }}
-        </button>
-      </nav>
-    </div>
-
-    <div class="prep-topbar__right">
-      <button type="button" class="prep-topbar__more">⋯ 更多</button>
-      <div ref="notificationPanelRef" class="prep-topbar__notification">
-        <button type="button" class="prep-topbar__bell" @click.stop="toggleNotificationPanel">
-          🔔
-          <span v-if="unreadNotificationCount" class="prep-topbar__bell-badge">
-            {{ unreadNotificationCount > 99 ? '99+' : unreadNotificationCount }}
-          </span>
-        </button>
-        <div v-if="notificationPanelVisible" class="notification-panel" @click.stop>
-          <div class="notification-panel__header">
-            <span>通知</span>
-            <button type="button" class="notification-panel__action" @click="markAllNotificationsAsRead">全部已读</button>
-          </div>
-          <div v-if="notificationsLoading" class="notification-panel__empty">加载中...</div>
-          <div v-else-if="!notifications.length" class="notification-panel__empty">暂无通知</div>
-          <div v-else class="notification-panel__list">
-            <button
-              v-for="notification in notifications"
-              :key="notification.id"
-              type="button"
-              class="notification-panel__item"
-              :class="{ unread: !notification.readStatus }"
-              @click="handleNotificationClick(notification)"
-            >
-              <div class="notification-panel__item-top">
-                <span class="notification-panel__title">{{ notification.title || '系统通知' }}</span>
-                <span class="notification-panel__time">{{ notification.createdAt || '' }}</span>
-              </div>
-              <div class="notification-panel__content">{{ notification.content || '暂无内容' }}</div>
-            </button>
-          </div>
-        </div>
-      </div>
-      <div ref="userMenuRef" class="dropdown prep-topbar__user-menu">
-        <button type="button" class="prep-topbar__user" @click.stop="toggleUserMenu">
-          <img :src="userAvatarSrc" alt="用户头像"/>
-          <span>{{ displayName }}</span>
-        </button>
-        <div v-show="userMenuOpen" class="dropdown-content is-open">
-          <button @click="handleUserMenuAction(goToCourse)">我的课堂</button>
-          <button v-if="userStore.account?.identity==='老师'" @click="handleUserMenuAction(goToLessonPrep)">备课区</button>
-          <button @click="closeUserMenu">开通VIP</button>
-          <button @click="closeUserMenu">机构用户认证</button>
-          <button @click="handleUserMenuAction(goToPersonalSetting)">个人设置</button>
-          <button @click="handleUserMenuAction(goToLogin)">退出登录</button>
-        </div>
-      </div>
-    </div>
-  </header>
-  <header v-else class="course-detail-topbar">
-    <div class="course-detail-topbar__left">
+  <AppTopbar
+    v-if="!showCourseDetails"
+    header-class="course-topbar"
+    :menus="courseTopbarMenus"
+    active-menu-key="course"
+    :display-name="displayName"
+    :user-avatar-src="userAvatarSrc"
+    :notifications="notifications"
+    :notifications-loading="notificationsLoading"
+    :unread-notification-count="unreadNotificationCount"
+    :show-prep-entry="canCreateCourse"
+    @menu-click="handleTopMenuClick"
+    @notification-open="loadNotifications"
+    @notification-click="handleNotificationClick"
+    @mark-all-notifications-as-read="markAllNotificationsAsRead"
+    @go-course="goToCourse"
+    @go-prep="goToLessonPrep"
+    @go-personal-setting="goToPersonalSetting"
+    @logout="goToLogin"
+  />
+  <AppTopbar
+    v-else
+    header-class="course-detail-topbar"
+    :show-logo="false"
+    :menus="[]"
+    :display-name="displayName"
+    :user-avatar-src="userAvatarSrc"
+    :notifications="notifications"
+    :notifications-loading="notificationsLoading"
+    :unread-notification-count="unreadNotificationCount"
+    :show-prep-entry="canCreateCourse"
+    @notification-open="loadNotifications"
+    @notification-click="handleNotificationClick"
+    @mark-all-notifications-as-read="markAllNotificationsAsRead"
+    @go-course="goToCourse"
+    @go-prep="goToLessonPrep"
+    @go-personal-setting="goToPersonalSetting"
+    @logout="goToLogin"
+  >
+    <template #left>
       <button type="button" class="course-detail-topbar__menu" @click="goToCourse">☰</button>
       <button type="button" class="top-nav-current" @click="goToCourse">我的课堂</button>
       <span class="course-breadcrumb-separator">〉</span>
       <span class="course-breadcrumb-current">{{ currentCourseTopLabel }}</span>
-    </div>
-    <div class="course-detail-topbar__right">
-      <div ref="notificationPanelRef" class="prep-topbar__notification">
-        <button type="button" class="prep-topbar__bell" @click.stop="toggleNotificationPanel">
-          🔔
-          <span v-if="unreadNotificationCount" class="prep-topbar__bell-badge">
-            {{ unreadNotificationCount > 99 ? '99+' : unreadNotificationCount }}
-          </span>
-        </button>
-        <div v-if="notificationPanelVisible" class="notification-panel" @click.stop>
-          <div class="notification-panel__header">
-            <span>通知</span>
-            <button type="button" class="notification-panel__action" @click="markAllNotificationsAsRead">全部已读</button>
-          </div>
-          <div v-if="notificationsLoading" class="notification-panel__empty">加载中...</div>
-          <div v-else-if="!notifications.length" class="notification-panel__empty">暂无通知</div>
-          <div v-else class="notification-panel__list">
-            <button
-              v-for="notification in notifications"
-              :key="notification.id"
-              type="button"
-              class="notification-panel__item"
-              :class="{ unread: !notification.readStatus }"
-              @click="handleNotificationClick(notification)"
-            >
-              <div class="notification-panel__item-top">
-                <span class="notification-panel__title">{{ notification.title || '系统通知' }}</span>
-                <span class="notification-panel__time">{{ notification.createdAt || '' }}</span>
-              </div>
-              <div class="notification-panel__content">{{ notification.content || '暂无内容' }}</div>
-            </button>
-          </div>
-        </div>
-      </div>
-      <div ref="userMenuRef" class="dropdown prep-topbar__user-menu">
-        <button type="button" class="prep-topbar__user" @click.stop="toggleUserMenu">
-          <img :src="userAvatarSrc" alt="用户头像"/>
-          <span>{{ displayName }}</span>
-        </button>
-        <div v-show="userMenuOpen" class="dropdown-content is-open">
-          <button @click="handleUserMenuAction(goToCourse)">我的课堂</button>
-          <button v-if="userStore.account?.identity==='老师'" @click="handleUserMenuAction(goToLessonPrep)">备课区</button>
-          <button @click="closeUserMenu">开通VIP</button>
-          <button @click="closeUserMenu">机构用户认证</button>
-          <button @click="handleUserMenuAction(goToPersonalSetting)">个人设置</button>
-          <button @click="handleUserMenuAction(goToLogin)">退出登录</button>
-        </div>
-      </div>
-    </div>
-  </header>
+    </template>
+  </AppTopbar>
 
   <div class="body-container"  v-if="!showCourseDetails">
     <div class="top-course-container">
